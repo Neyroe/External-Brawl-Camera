@@ -2,5 +2,5 @@
 External Brawl Camera is a port of External Melee Camera made by KELLZ
 https://github.com/sadkellz/External-Melee-Camera
 
-If you want to install EBC you have to follow the exaxt same step as EMC, and replace every .py files by mine !
-Please don't forget this is an early version, there is some feature missing from EMC because I don't have the knowledge to recreate them..
+If you want to install EBC, you have to follow exactly the same steps as EMC, and replace all the .py files by mine !
+Don't forget that this is an early version, EBC is missing some features from EMC because I don't have the knowledge to recreate them... especially the one linked between blender and dolphin
