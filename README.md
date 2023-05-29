@@ -57,16 +57,14 @@ https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/d870f56f-6e76-44
 
 ## Optionnal
 ### Center blender camera
+You can Add 3D View: 3D Navigation
 <br />
 <div align="center">
   <a href="https://github.com/Neyroe/External-Brawl-Camera/">
-    <img src="Examples/imgs/Add-on 3D view Navigation.png">
     <img src="Examples/imgs/Camera_to_view.png">
     <img src="Examples/imgs/Center your camera.png">
   </a>
-<h1 align="center">External Brawl Camera</h1>
 </div>
-
 
 ## Known Issues
 Z-Axis can only be updated in **pause** ?
