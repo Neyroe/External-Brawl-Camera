@@ -12,13 +12,13 @@ External Brawl Camera is a port of External Melee Camera made by KELLZ
 
 https://github.com/sadkellz/External-Melee-Camera
 ## INSTALLATION
-Follow exactly the same steps as EMC, and replace all the .py files by mine !
+Follow exactly the same steps as EMC, and install Add-on with my .py Files !
 ## IMPORTANT
->This Add-on is mean to be use on original Project+ launcher.
+>This Add-on is mean to be use on Project+ launcher.
 
-**Project M 3.6 won't work** but it might be possible to **use it with 3.6R** !
+**Project M 3.6 won't work** but it might be possible to **use it with 3.6R** !(not tested) 
 ## FEATURES
-Since EBC is still in developtement some features are missing from EMC and other are brand news !
+Since EBC is still in developement some features are missing from EMC and other are brand news !
 
 **Ready :**
 1. Control brawl Camera from Blender
@@ -64,10 +64,10 @@ You cannot modify Z origin position in game. This is where the camera is looking
 - For revolutionnasing the whole content creation scene !!  
 
 Thanks to [KELLZ](https://github.com/sadkellz) 
-- For his amazing work and help,
+- For his amazing work and help.
 
 Thanks to [WhiteTpoison](https://github.com/JaredWhiteOne) 
-- For helping on **EBC** & his work on **BrawlBack**
+- For helping on **EBC** & his work on **BrawlBack**.
 
 # CONTRIBUTING
 ## DOL
