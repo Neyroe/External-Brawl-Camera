@@ -29,14 +29,21 @@ Could be added :
 3.  Some zoom animation 
 4.  FOV, Crop or transform (camera render)
 
+## CONTACT & SUPPORT
+You are free to ask me anything on discord at :
+>Neyroe#4096
+
 # DOCUMENTATION
 ## EXAMPLE
 Place holder, place a lot of images
 ## Known Issues
->Z-Axis can only be updated in **pause**
->You cannot modify Z origin position in game **(limited by brawl Engine)**
->You can moove arround camera position while in debug mod, but the rotation camera while only be updated on next frame
->**Camera lock** has to be **Toggle ON** in debug menu (newly automated in last version)
+Z-Axis can only be updated in **pause** ?
 
-## CONTRIBUTING
+You can change **camera position** while in **debug mod**, but the **rotation** while only be **updated on next frame**
+
+You cannot modify Z origin position in game. This is where the camera is looking **(limited by brawl Engine)**
+
+**Camera lock** has to be **Toggle ON** in debug menu (newly automated in last version of EBC)
+
+# CONTRIBUTING
 ## 
