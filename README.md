@@ -3,7 +3,6 @@
   <a href="https://github.com/Neyroe/External-Brawl-Camera/">
     <img src="Examples/imgs/EBC_logo_WIP.png"  width="400">
   </a>
-
 <h1 align="center">External Brawl Camera</h1>
 </div>
 
@@ -55,6 +54,18 @@ https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/2ca67b02-f303-4c
 https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/bc172d1e-82ef-4dfa-8ca8-bb6b58a111eb
 ### EXAMPLE 3
 https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/d870f56f-6e76-44fd-af16-8b881a06c692
+
+## Optionnal
+### Center blender camera
+<br />
+<div align="center">
+  <a href="https://github.com/Neyroe/External-Brawl-Camera/">
+    <img src="Examples/imgs/Add-on 3D view Navigation.png">
+    <img src="Examples/imgs/Camera_to_view.png">
+    <img src="Examples/imgs/Center your camera.png">
+  </a>
+<h1 align="center">External Brawl Camera</h1>
+</div>
 
 
 ## Known Issues
