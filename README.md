@@ -21,8 +21,10 @@ Since EBC is still in developtement some features are missing from EMC and other
 **Ready :**
 1. Control brawl Camera from Blender
 2. Display position Player in scene
-3. new ! Z-Axis camera can be change
-4. new ! Update blender camera as brawl camera
+3. Display frame counter
+4. new ! Z-Axis camera can be change
+5. new ! Update Depth render camera
+6. new ! Update blender camera position as brawl camera
 
 Missing :
 
@@ -37,6 +39,7 @@ Could be added in near futur :
 2.  Toggle On/Off Debug menu features
 3.  Some zoom animation 
 4.  FOV, Crop or transform (camera render)
+5.  Automated Toggle Stage
 
 ## CONTACT & SUPPORT
 You are free to ask me anything on discord at :
