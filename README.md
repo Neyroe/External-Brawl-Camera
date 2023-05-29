@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/sadkellz/External-Melee-Camera/">
-    <img src="EBC_logo_WIP"  width="400">
+    <img src="imgs/EBC_logo_WIP"  width="400">
   </a>
 
 <h1 align="center">EXTERNAL BRAWL CAMERA</h1>
