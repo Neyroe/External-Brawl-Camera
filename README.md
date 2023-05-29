@@ -1,5 +1,12 @@
-# EXTERNAL-BRAWL-CAMERA
-Place holder logo and text
+<br />
+<div align="center">
+  <a href="https://github.com/sadkellz/External-Melee-Camera/">
+    <img src="imgs/emc_logo.png"  width="400">
+  </a>
+
+<h1 align="center">EXTERNAL BRAWL CAMERA</h1>
+</div>
+
 ## External Brawl Camera is a port of External Melee Camera made by KELLZ
 https://github.com/sadkellz/External-Melee-Camera
 ## INSTALLATION
