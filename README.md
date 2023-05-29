@@ -47,5 +47,16 @@ You cannot modify Z origin position in game. This is where the camera is looking
 
 **Camera lock** has to be **Toggle ON** in debug menu (newly automated in last version of EBC)
 
+# Acknowledgments
+[External Melee Camera](https://github.com/sadkellz/External-Melee-Camera)
+- The project that made me realize this was even possible.  
+
+[Pymem](https://pymem.readthedocs.io/en/latest/)
+- This Python library is very useful and streamlined the harder parts of this project.
+
+Thanks to [KELLZ](https://github.com/sadkellz) for is amazing work and help,
+
+Thanks to [WhiteTpoison](https://github.com/JaredWhiteOne) for helping on **EBC** & his work on **BrawlBack**
 # CONTRIBUTING
-## 
+## DOL
+
