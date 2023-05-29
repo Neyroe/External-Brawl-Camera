@@ -48,8 +48,14 @@ You are free to ask me anything on discord at :
 >Neyroe#4096
 
 # DOCUMENTATION
-## EXAMPLE
-Place holder, place a lot of images
+## EXAMPLES
+### EXAMPLE 1
+### EXAMPLE 2
+https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/bc172d1e-82ef-4dfa-8ca8-bb6b58a111eb
+### EXAMPLE 3
+https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/d870f56f-6e76-44fd-af16-8b881a06c692
+### EXAMPLE 4
+
 ## Known Issues
 Z-Axis can only be updated in **pause** ?
 
@@ -68,7 +74,3 @@ Thanks to [KELLZ](https://github.com/sadkellz)
 
 Thanks to [WhiteTpoison](https://github.com/JaredWhiteOne) 
 - For helping on **EBC** & his work on **BrawlBack**.
-
-# CONTRIBUTING
-## DOL
-
