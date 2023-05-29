@@ -62,7 +62,7 @@ You can add "3D View: 3D Navigation" blender Add-on wich can be helpfull
 <div align="center">
     <img src="/imgs/Camera_to_view.png">
     <img src="/imgs/Center your camera.png">
-<h1 align="center">External Brawl Camera</h1>
+<h1 align="center"></h1>
 </div>
 
 
