@@ -23,10 +23,20 @@ Every feature wich involve direct connection between dolphin & blender, for exam
 3. Screenshot, Image & Preview Sequence
 > Any help for adding those features are welcome !
 
+Could be added :
+1.  Toggle Music or sound effect 
+2.  Toggle Debug menu feature
+3.  Some zoom animation 
+4.  FOV, Crop or transform (camera render)
+
 # DOCUMENTATION
 ## EXAMPLE
-## Knon Issues
-
+Place holder, place a lot of images
+## Known Issues
+>Z-Axis can only be updated in **pause**
+>You cannot modify Z origin position in game **(limited by brawl Engine)**
+>You can moove arround camera position while in debug mod, but the rotation camera while only be updated on next frame
+>**Camera lock** has to be **Toggle ON** in debug menu (newly automated in last version)
 
 ## CONTRIBUTING
 ## 
