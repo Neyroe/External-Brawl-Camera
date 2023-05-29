@@ -6,7 +6,8 @@ https://github.com/sadkellz/External-Melee-Camera
 Follow exactly the same steps as EMC, and replace all the .py files by mine !
 ## IMPORTANT
 >This Add-on is mean to be use on original Project+ launcher.
-Project M 3.6 won't work but it might be possible to use it with 3.6R !
+
+**Project M 3.6 won't work** but it might be possible to **use it with 3.6R** !
 ## FEATURES
 Since EBC is still in developtement some features are missing from EMC and other are brand news !
 
@@ -17,15 +18,16 @@ Since EBC is still in developtement some features are missing from EMC and other
 4. new ! Update blender camera as brawl camera
 
 Missing :
-Every feature wich involve direct connection between dolphin & blender, for example
+
+>Every feature wich involve direct connection between dolphin & blender
 1. Save/Load dolphin State
 2. Play & Pause dolphin emulator from blender
 3. Screenshot, Image & Preview Sequence
 > Any help for adding those features are welcome !
 
-Could be added :
-1.  Toggle Music or sound effect 
-2.  Toggle Debug menu feature
+Could be added in near futur :
+1.  Toggle On/Off Music or sound effect 
+2.  Toggle On/Off Debug menu features
 3.  Some zoom animation 
 4.  FOV, Crop or transform (camera render)
 
