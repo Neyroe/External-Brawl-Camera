@@ -7,7 +7,9 @@
 <h1 align="center">External Brawl Camera</h1>
 </div>
 
-## External Brawl Camera is a port of External Melee Camera made by KELLZ
+## DESCRIPTION
+External Brawl Camera is a port of External Melee Camera made by KELLZ
+
 https://github.com/sadkellz/External-Melee-Camera
 ## INSTALLATION
 Follow exactly the same steps as EMC, and replace all the .py files by mine !
