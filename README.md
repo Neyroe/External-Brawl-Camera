@@ -4,7 +4,7 @@
     <img src="imgs/EBC_logo_WIP.png"  width="400">
   </a>
 
-<h1 align="center">EXTERNAL BRAWL CAMERA</h1>
+<h1 align="center">External Brawl Camera</h1>
 </div>
 
 ## External Brawl Camera is a port of External Melee Camera made by KELLZ
