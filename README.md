@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/Neyroe/External-Brawl-Camera/">
-    <img src="imgs/EBC_logo_WIP.png"  width="400">
+    <img src="Examples/imgs/EBC_logo_WIP.png"  width="400">
   </a>
 
 <h1 align="center">External Brawl Camera</h1>
