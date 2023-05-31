@@ -49,10 +49,12 @@ You are free to ask me anything on discord at :
 # DOCUMENTATION
 ## EXAMPLES
 ### EXAMPLE 1
-https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/2ca67b02-f303-4c83-93e9-77ab19153c30
+https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/2ebc388c-6b69-42c9-a0ea-a54eab43cea1
 ### EXAMPLE 2
-https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/bc172d1e-82ef-4dfa-8ca8-bb6b58a111eb
+https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/2ca67b02-f303-4c83-93e9-77ab19153c30
 ### EXAMPLE 3
+https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/bc172d1e-82ef-4dfa-8ca8-bb6b58a111eb
+### EXAMPLE 4
 https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/d870f56f-6e76-44fd-af16-8b881a06c692
 
 ## Optionnal
