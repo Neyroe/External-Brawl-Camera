@@ -57,7 +57,7 @@ https://github.com/Neyroe/External-Brawl-Camera/assets/62217068/d870f56f-6e76-44
 
 ## Optionnal
 ### Center blender camera
-You can add "3D View: 3D Navigation" blender Add-on wich can be helpfull
+You can add "3D View: 3D Navigation" Add-on wich can be helpfull
 <br />
 <div align="center">
     <img src="/imgs/Camera_to_view.png">
