@@ -5,29 +5,17 @@ from .emc_op import menu_sync_camera, menu_current_frame, menu_DepthRadius
 
 class control_properties(PropertyGroup):
 
-    is_media_sync: BoolProperty(
-        name="Media Controls",
-        description="",
-        default=False
-        )
+    reverse_sync: BoolProperty(
+    name="Brawl Camera over blender",
+    description="",
+    default=False
+    )
 
     is_sync_player: BoolProperty(
         name="Player Positions",
-        description="",
+        description="Sync player position from Pm to blender",
         default=False
         )
-
-    slippi_path: StringProperty(
-        name="",
-        description=" 'C:\\Users\\*yourname*\\AppData\\Roaming\\Slippi Launcher\\playback\\User\\ScreenShots' ",
-        default="",
-        maxlen=1024,
-        subtype='DIR_PATH'
-        )
-
-    selected_slot: IntProperty(
-        default=1
-    )
 
     frame_number: IntProperty(
         default=0,
@@ -38,12 +26,12 @@ def update_panel(self, context):
     # Use the tag_redraw method to mark the panel for redrawing
     context.area.tag_redraw()
 
-class emc_control_panel(Panel):
-    bl_label = 'Brawl Melee Camera'
+class ebc_control_panel(Panel):
+    bl_label = 'Sync Brawl Camera'
     bl_idname = 'OBJECT_PT_external_melee_camera'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Brawl Control Panel'
+    bl_category = 'Blender Camera to Brawl'
     bl_context = 'objectmode'
     panel_timer = None
     @classmethod
@@ -61,7 +49,7 @@ class emc_control_panel(Panel):
         cam_row1.operator('wm.sync_cam', icon_value=71)
         cam_row2 = cam_box.row()
         cam_row2.alignment = 'Center'.upper()
-        cam_row2.prop(mytool, 'is_media_sync')
+        cam_row2.prop(mytool, 'reverse_sync')
         cam_row2.prop(mytool, 'is_sync_player')
 
         layout.prop(context.scene, "frontSlider", slider=True, text="Front Depth")
@@ -76,8 +64,8 @@ class emc_control_panel(Panel):
 
 classes = (
     control_properties,
-    emc_control_panel,
+    ebc_control_panel,
     menu_sync_camera,
     menu_current_frame,
-    menu_DepthRadius
+    menu_DepthRadius,
     )
