@@ -69,11 +69,9 @@ You can add "3D View: 3D Navigation" Add-on wich can be helpfull
 
 
 ## Known Issues
-Z-Axis can only be updated in **pause** ?
-
 You can change **camera position** while in **debug mod**, but the **rotation** while only be **updated on next frame**
 
-You **cannot modify Z origin** position in game. This is where the camera is looking **(limited by brawl Engine)**
+You **cannot modify Z pos for origin** while in game. (This is where the camera is looking, but you can while camera is pausing and you are focusing a player)
 
 **Camera lock** has to be **Toggle ON** in debug menu (newly automated in last version of EBC)
 
