@@ -69,7 +69,7 @@ You can add "3D View: 3D Navigation" Add-on wich can be helpfull
 
 
 ## Known Issues
-You can change **camera position** while in **debug mod**, but the **rotation** while only be **updated on next frame**
+You can change **camera position** while in **debug mod**, but the **rotation** while only be **updated on next frame**, EDIT 27/11/2023 : Maybe I did find a way but this will be hard to implement
 
 You **cannot modify Z pos for origin** while in game. (This is where the camera is looking, but you can while camera is pausing and you are focusing a player)
 
