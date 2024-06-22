@@ -3,19 +3,19 @@ import bpy
 pm = pymem.Pymem("Dolphin.exe")
 # Page size to look for in pattern_scan_all, as there could be multiple pages with RSBE01.
 EMU_SIZE = 0x2000000
+#DEBUG MOD RESSOURCES
+DEBUG_CAMLOCK_ADRR = 0x4E0B37 #off 00 / On 01, not perfect sometime it bug ?
 
-# Brawl specific offsets. These will always be found x distance from RSBE01 (start of emu)
-TIME_START = 0x62B420 #start as timer goes work on every stage (0 mean match didn't start)
+TIME_START_ADRR = 0x62B420 #start as timer goes work on every stage (0 mean match didn't start)
+TIMER_START_MATCH_ADRR = 0x5BBFF0 #start as -213, 2 byte
 CAM_TYPE = 0x6155C9 #(bool) 0 for IG & 1 for pause (only read)
-TIMER_IN_PAUSE_ADRR = 0x167EE22 #1 byte, first frame of pause = 30
-TIMER_START_MATCH = 0x5BBFF0 #start as -213, 2 byte
 
 #CAMERA DATA
 CAM_FRONT_DEPTH_ADRR = 0x5B6DFC #float value
 CAM_BACK_DEPTH_ADRR = 0x5B6E00 #float value
 #Camera ON PAUSE
 CAM_PAUSE_PIVOT_ADRR = 0x6636C8 #Pivot point adress
-CAM_ROTATION_ADRR = 0x6636D4 #X & Y radiant
+CAM_PAUSE_ROTATION_ADRR = 0x6636D4 #X & Y radiant
 DISTANCE_CAM_POINT_ADRR = 0x6636DC #distance du pivot point
 CAM_ROT_Z_ADRR = 0x5B6DE8 #Do a Barell Roll !
 
@@ -32,10 +32,7 @@ MUSIC_ON_OFF = 0x10E60F34 # 1 - 0   0x90E60F34
 SOUND_EFFECT_ON_OFF = 0x10E60F38 # 1 - 0   0x90E60F38
 
 #if ID = -1 or > 50, Hide PLAYER_X /// Position � update avec le sheet
-ID_P1 = 0x62131F #1bytes, -1 mean no char
-ID_P2 = 0x6214E3
-ID_P3 = 0x6216A7
-ID_P4 = 0x62186B
+list_playerID = [0x62131F,0x6214E3,0x6216A7,0x62186B] #1bytes, -1 mean no char
 
 # Finds the specific page with the size of EMU_SIZE.
 def pattern_scan_all(handle, pattern, *, return_multiple=False):
@@ -78,4 +75,3 @@ def find_dolphin_funcs(byte_pattern):
     return found
 
 RSBE01 = find_RSBE01()
-CURRENT_FRAME = RSBE01 + TIME_START
