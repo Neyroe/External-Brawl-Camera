@@ -1,0 +1,23 @@
+# External Brawl Camera - Python Dependencies
+# ============================================
+
+# Blender 4.3+ is required (not installable via pip)
+# Install Blender from: https://www.blender.org/download/
+
+# dolphin-memory-engine
+dolphin-memory-engine
+
+# Linux: by default DME tries to hook the process named "dolphin-emu"
+# To hook the mainline Dolphin build instead of the P+ launcher, set:
+#   export DME_DOLPHIN_PROCESS_NAME=dolphin-emu-x11
+# Add this to ~/.bash_profile  or set it before launching Blender.
+
+# mathutils and bpy are provided by Blender
+
+# ------------------------------------------------------------
+# Recommended VSCode extensions
+# ------------------------------------------------------------
+# jacqueslucke.blender-development@0.0.30  - Blender addon dev (run/reload from VSCode)
+# ms-python.python@2026.2.0               - Python language support
+# ms-python.vscode-pylance@2026.1.1       - Type checking (Pyright-based)
+# ms-python.debugpy@2025.18.0             - Python debugger
