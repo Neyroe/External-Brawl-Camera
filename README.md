@@ -1,7 +1,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/Neyroe/External-Brawl-Camera/">
-    <img width="719" height="614" alt="image" src="https://github.com/user-attachments/assets/d3dba29a-f0a7-4765-96fc-1df3ab76c649" />
+    <img width="400" alt="external-brawl-camera-logo" src="https://github.com/user-attachments/assets/d3dba29a-f0a7-4765-96fc-1df3ab76c649" />
   </a>
 <h1 align="center">External Brawl Camera</h1>
 </div>
