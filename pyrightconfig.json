@@ -1,0 +1,9 @@
+{
+    "pythonVersion": "3.11",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": false,
+    "reportInvalidTypeForm": "none",
+    "reportArgumentType": "none",
+    "reportOperatorIssue": "none"
+}

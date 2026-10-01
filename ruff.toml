@@ -1,0 +1,12 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+ignore = [
+    "BLE001", # blind except (used intentionally in get_current_frame)
+    "ERA001", # commented-out code (normal in Blender dev)
+    "E741",   # ambiguous variable name (l, O, I)
+    "F401",   # unused imports (bpy, mathutils often imported for side effects)
+    "F403",   # star imports (intentional pattern for Blender addons)
+    "F405",   # may be undefined from star imports (false positive with star imports)
+]

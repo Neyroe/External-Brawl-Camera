@@ -1,0 +1,23 @@
+TODO List - External Brawl Camera
+=================================
+
+## Dependencies
+- [ ] Add fork of custom dolphin-memory-engine library
+      Location: /home/neyroe/Documents/py-dolphin-memory-engine
+      This is a custom Linux-compatible fork that needs to be documented
+      Consider adding it as a git submodule or documenting the installation process
+
+## Documentation
+- [ ] Create installation guide for the custom dolphin-memory-engine
+- [ ] Document Blender 4.3 compatibility requirements
+- [ ] Add usage examples
+
+## Code
+- [ ] Standardize property syntax in ebc_panel.py (type annotations vs assignment)
+- [ ] Complete test coverage for dolphin_memory_engine integration
+- [ ] Add error handling for Dolphin connection failures
+
+## Future Features
+- [ ] Add more comprehensive tests
+- [ ] Improve error messages when Dolphin is not found
+- [ ] Add configuration file support
