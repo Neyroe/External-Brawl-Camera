@@ -1,8 +1,0 @@
-{
-    "python.defaultInterpreterPath": "/usr/bin/python3",
-    "python.analysis.typeCheckingMode": "basic",
-    "python.analysis.diagnosticSeverityOverrides": {
-        "reportInvalidTypeForm": "none",
-        "reportArgumentType": "none"
-    }
-}
