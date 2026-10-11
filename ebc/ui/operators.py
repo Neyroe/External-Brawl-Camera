@@ -1,25 +1,17 @@
-import math
 import os
 import tempfile
 
 import bpy
-from bpy.props import EnumProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 from mathutils import Matrix
 
 from .. import runtime
+from ..core import backend, dolphin_config, emucontrol
 from ..core import camera as cam_math
-from ..core import game as g
-from . import props, record, sync
-
-RIG_COLLECTION = "EBC"
-# Default framing: in front of the stage. Brawl +Z (towards the viewer) is Blender +Y.
-RIG_CAMERA_LOCATION = (0.0, 150.0, 20.0)
-
-
-def _report_game_error(op: Operator, what: str) -> None:
-    err = runtime.get_game().last_error
-    op.report({"WARNING"}, f"{what}: {err}" if err else what)
+from ..core import display as disp
+from ..core import fighters as ft
+from . import cameras, lifecycle, props, record, screenshot, sync, util
 
 
 def dolphin_process_count() -> int | None:
@@ -30,21 +22,7 @@ def dolphin_process_count() -> int | None:
     """
     if not os.path.isdir("/proc"):
         return None
-    n = 0
-    try:
-        for pid in os.listdir("/proc"):
-            if not pid.isdigit():
-                continue
-            try:
-                with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
-                    name = f.read().strip().lower()
-            except OSError:
-                continue
-            if name.startswith("dolphin-emu") or name.startswith("project-plus"):
-                n += 1
-    except OSError:
-        return None
-    return n
+    return len(dolphin_config.dolphin_pids(dme_names()))
 
 
 class EBC_OT_connect(Operator):
@@ -67,6 +45,7 @@ class EBC_OT_connect(Operator):
         props.push_settings(s)
         runtime.devserver.set_port(s.devserver_port)
         runtime.devserver.status()
+        dsu_error = start_dsu()
         s.frame_number = game.current_frame() or 0
         count = dolphin_process_count()
         notice = getattr(game.backend, "notice", None)
@@ -74,6 +53,8 @@ class EBC_OT_connect(Operator):
             self.report({"WARNING"}, f"{count} Dolphin processes running: EBC hooked the first one found")
         elif notice:
             self.report({"WARNING"}, notice)
+        elif dsu_error:
+            self.report({"WARNING"}, f"Connected; Dolphin hotkeys unavailable: {dsu_error}")
         elif not game.profile_sure:
             self.report({"WARNING"}, f"Game version: {game.profile_info}")
         else:
@@ -88,11 +69,31 @@ class EBC_OT_disconnect(Operator):
     bl_label = "Disconnect"
 
     def execute(self, context):
-        sync.stop()
-        if not runtime.get_game().disconnect():
+        if not lifecycle.shutdown():
             self.report({"WARNING"}, "Some game values could not be restored")
-        runtime.devserver.close()
         return {"FINISHED"}
+
+
+def dme_names() -> tuple[str, ...]:
+    """Process names DME hooks (the one it is bound to, else its defaults and the known builds)."""
+    bound = getattr(runtime.get_game().backend, "bound_name", None) or os.environ.get(backend.PROCESS_NAME_ENV)
+    return (bound,) if bound else backend.KNOWN_NAMES
+
+
+def start_dsu() -> str | None:
+    """Start EBC's DSU pad and find the running Dolphin's folders. Returns an error, or None."""
+    p = props.prefs()
+    props.load_paths_from_prefs()
+    try:
+        found = dolphin_config.find_running_dolphin(dme_names())
+    except Exception as exc:  # never block Connect  # noqa: BLE001
+        found = None
+        print(f"[EBC] Dolphin folder detection failed: {exc}")
+    if found is not None:
+        props.remember_detected(found)
+    if not runtime.dsu.start(int(p.dsu_port)):
+        return runtime.dsu.error
+    return None
 
 
 class EBC_OT_sync_start(Operator):
@@ -155,8 +156,8 @@ class EBC_OT_isolate_fighter(Operator):
     def execute(self, context):
         s = props.settings(context)
         modes = s.fighter_modes()
-        new_modes, isolating = g.toggle_isolation(modes, self.slot)
-        if isolating and g.isolated_slot(modes) is None:
+        new_modes, isolating = ft.toggle_isolation(modes, self.slot)
+        if isolating and ft.isolated_slot(modes) is None:
             # entering isolation (not switching to another slot): remember what to put back
             s.isolate_hud = s.hud
             s.isolate_green_screen = s.green_screen
@@ -169,9 +170,11 @@ class EBC_OT_isolate_fighter(Operator):
         if isolating:
             # Opaque fill (whatever the swatch's alpha) over a hidden stage: the key colour is exact
             # everywhere, foreground stage parts included (they go with the stage).
-            s.green_screen = True
-            props.update_green_screen(s)
-            s.stage_display = g.STAGE_HIDDEN
+            if s.green_screen:
+                props.update_green_screen(s)  # already on: sent again, now opaque
+            else:
+                s.green_screen = True  # its update sends it, opaque
+            s.stage_display = disp.STAGE_HIDDEN
             s.hud = False
         elif s.isolate_saved:
             s.isolate_saved = False  # the swatch's own alpha again
@@ -182,67 +185,61 @@ class EBC_OT_isolate_fighter(Operator):
         return {"FINISHED"}
 
 
-def _rig_collection(context):
-    coll = bpy.data.collections.get(RIG_COLLECTION)
-    if coll is None:
-        coll = bpy.data.collections.new(RIG_COLLECTION)
-    if coll.name not in context.scene.collection.children:
-        context.scene.collection.children.link(coll)
-    return coll
+class EBC_OT_clip_helper(Operator):
+    """Create an empty that drives this clip plane: attached to the synced camera (Child Of, without its
+    scale), on its view axis, so the clip value is minus its local Z (move it along Z only)"""
 
+    bl_idname = "ebc.clip_helper"
+    bl_label = "Add clip helper"
+    bl_options = {"REGISTER", "UNDO"}
 
-def _new_empty(name, coll, display="PLAIN_AXES", size=10.0):
-    obj = bpy.data.objects.new(name, None)
-    obj.empty_display_type = display
-    obj.empty_display_size = size
-    coll.objects.link(obj)
-    return obj
-
-
-def _track(camera, target) -> None:
-    for con in camera.constraints:
-        if con.type in sync.ORIGIN_CONSTRAINTS:
-            con.target = target
-            return
-    con = camera.constraints.new("TRACK_TO")
-    con.target = target
-    con.track_axis = "TRACK_NEGATIVE_Z"
-    con.up_axis = "UP_Y"
-
-
-def default_fov() -> float:
-    """The stage's own vertical FOV (radians) as last read from the game, else 30 degrees."""
-    fov = runtime.get_game().stage_fov
-    return fov if fov is not None else math.radians(g.GAME_DEFAULT_FOV_DEG)
-
-
-def set_default_fov(camera, scene, fov: float | None = None) -> None:
-    cam = camera.data
-    if cam.type != "PERSP":
-        return
-    r = scene.render
-    cam.lens = g.lens_for_vertical_fov(
-        default_fov() if fov is None else fov,
-        cam.sensor_width,
-        cam.sensor_height,
-        cam.sensor_fit,
-        r.resolution_x * r.pixel_aspect_x,
-        r.resolution_y * r.pixel_aspect_y,
+    which: EnumProperty(items=[("NEAR", "Near", ""), ("FAR", "Far", "")], default="FAR")
+    stage_row: BoolProperty(
+        name="For the stage row",
+        description="Set it on the selected Stages row (used on that stage only) instead of the Camera panel",
+        default=False,
     )
 
+    @classmethod
+    def description(cls, context, properties):
+        doc = cls.__doc__ or ""
+        return f"{doc}. Used on the selected stage only" if properties.stage_row else doc
 
-def new_camera(context, name, origin):
-    coll = _rig_collection(context)
-    data = bpy.data.cameras.new(name)
-    data.clip_start = 1.0
-    data.clip_end = 5000.0
-    cam = bpy.data.objects.new(name, data)
-    cam.location = RIG_CAMERA_LOCATION
-    coll.objects.link(cam)
-    set_default_fov(cam, context.scene)
-    if origin is not None:
-        _track(cam, origin)
-    return cam
+    def execute(self, context):
+        s = props.settings(context)
+        row = None
+        if self.stage_row:
+            if not 0 <= s.stage_presets_index < len(s.stage_presets):
+                self.report({"WARNING"}, "Select a row of the Stages list first")
+                return {"CANCELLED"}
+            row = s.stage_presets[s.stage_presets_index]
+        camera = cameras.effective_camera(s, context.scene)
+        if camera is None:
+            self.report({"WARNING"}, "Pick or create the rig camera first")
+            return {"CANCELLED"}
+        near = self.which == "NEAR"
+        name = "EBC_Near" if near else "EBC_Far"
+        if row is not None:
+            name = f"{name}_{row.name}"
+        obj = cameras.new_empty(name, cameras.rig_collection(context), "SPHERE", 5.0)
+        # Start where the plane is now, on the view axis: local Z = -clip value. A Child Of constraint
+        # without scale instead of a parent: the helper follows the camera's location and rotation
+        # but not its scale, so a camera scaled for the viewport never moves it (local unit = world unit).
+        depth = float(s.near_clip if near else min(s.far_clip, 1000))
+        con = obj.constraints.new("CHILD_OF")
+        con.name = "EBC camera"
+        con.target = camera
+        con.use_scale_x = con.use_scale_y = con.use_scale_z = False
+        con.set_inverse_pending = False
+        con.inverse_matrix = Matrix.Identity(4)
+        obj.location = (0.0, 0.0, -depth)
+        obj.lock_location = (True, True, False)  # sideways does not change the depth: Z only
+        target = row if row is not None else s
+        if near:
+            target.near_object = obj
+        else:
+            target.far_object = obj
+        return {"FINISHED"}
 
 
 class EBC_OT_create_rig(Operator):
@@ -254,23 +251,22 @@ class EBC_OT_create_rig(Operator):
 
     def execute(self, context):
         s = props.settings(context)
-        coll = _rig_collection(context)
+        coll = cameras.rig_collection(context)
         created = []
         if s.origin is None:
-            s.origin = bpy.data.objects.get("Origin") or _new_empty("Origin", coll, "SPHERE", 5.0)
+            s.origin = bpy.data.objects.get("Origin") or cameras.new_empty("Origin", coll, "SPHERE", 5.0)
             created.append(s.origin.name)
         if s.camera is None:
             existing = bpy.data.objects.get("Camera")
             if existing is not None and existing.type == "CAMERA":
                 s.camera = existing
             else:
-                s.camera = new_camera(context, "Camera", s.origin)
+                s.camera = cameras.new_camera(context, "Camera", s.origin)
                 created.append(s.camera.name)
-        for slot in props.SLOTS:
-            attr = f"player_{slot + 1}"
+        for slot, attr in zip(props.SLOTS, props.PLAYER_PROPS, strict=True):
             if getattr(s, attr) is None:
                 name = f"PLAYER_{slot + 1}"
-                obj = bpy.data.objects.get(name) or _new_empty(name, coll, "SINGLE_ARROW", 10.0)
+                obj = bpy.data.objects.get(name) or cameras.new_empty(name, coll, "SINGLE_ARROW", 10.0)
                 setattr(s, attr, obj)
                 created.append(obj.name)
         if context.scene.camera is None:
@@ -288,12 +284,12 @@ class EBC_OT_reset_fov(Operator):
 
     @classmethod
     def poll(cls, context):
-        cam = sync.effective_camera(props.settings(context), context.scene)
+        cam = cameras.effective_camera(props.settings(context), context.scene)
         return cam is not None and cam.type == "CAMERA"
 
     def execute(self, context):
-        cam = sync.effective_camera(props.settings(context), context.scene)
-        set_default_fov(cam, context.scene)
+        cam = cameras.effective_camera(props.settings(context), context.scene)
+        cameras.set_default_fov(cam, context.scene)
         return {"FINISHED"}
 
 
@@ -301,16 +297,6 @@ AXONOMETRIC_PRESETS = {
     "ISOMETRIC": ("Isometric", cam_math.ELEVATION_ISOMETRIC),
     "DIMETRIC": ("Dimetric 2:1", cam_math.ELEVATION_DIMETRIC),
 }
-
-
-def aimed_point(camera):
-    """What the camera looks at: its tracking target, else its view axis on the stage plane
-    (else 100 units ahead)."""
-    for con in camera.constraints:
-        if con.type in sync.ORIGIN_CONSTRAINTS and con.enabled and getattr(con, "target", None) is not None:
-            return tuple(con.target.matrix_world.translation)
-    mw = [tuple(row) for row in camera.matrix_world]
-    return cam_math.plane_target(mw) or cam_math.axis_target(mw)
 
 
 class EBC_OT_camera_axonometric(Operator):
@@ -340,23 +326,23 @@ class EBC_OT_camera_axonometric(Operator):
 
     @classmethod
     def poll(cls, context):
-        return props.synced_camera(props.settings(context)) is not None
+        return cameras.synced_camera(props.settings(context)) is not None
 
     def execute(self, context):
         s = props.settings(context)
-        cam = props.synced_camera(s)
+        cam = cameras.synced_camera(s)
         if cam is None:
             self.report({"WARNING"}, "No synced camera")
             return {"CANCELLED"}
         label, elevation = AXONOMETRIC_PRESETS[self.preset]
         azimuth = float(s.axonometric_azimuth)
-        target = aimed_point(cam)
+        target = cameras.aimed_point(cam)
         eye = cam.matrix_world.translation
         distance = max(1.0, sum((eye[i] - target[i]) ** 2 for i in range(3)) ** 0.5)
         if cam.data.type != "ORTHO":
-            props.keep_framing_ortho(cam, context.scene, distance)  # the perspective it had, at its target
+            cameras.keep_framing_ortho(cam, context.scene, distance)  # the perspective it had, at its target
             cam.data.type = "ORTHO"
-        sync.set_pose_keep_scale(cam, Matrix(cam_math.axonometric_matrix(target, elevation, azimuth, distance)))
+        cameras.set_pose_keep_scale(cam, Matrix(cam_math.axonometric_matrix(target, elevation, azimuth, distance)))
         sync.request_cut()
         self.report({"INFO"}, f"{cam.name}: {label}, yaw {azimuth:g}°, ortho scale {cam.data.ortho_scale:.1f}")
         return {"FINISHED"}
@@ -371,7 +357,7 @@ class EBC_OT_camera_add(Operator):
 
     def execute(self, context):
         s = props.settings(context)
-        cam = new_camera(context, f"EBC_Camera.{len(s.cameras) + 1:03d}", s.origin)
+        cam = cameras.new_camera(context, f"EBC_Camera.{len(s.cameras) + 1:03d}", s.origin)
         item = s.cameras.add()
         item.camera = cam
         s.cameras_index = len(s.cameras) - 1
@@ -392,8 +378,7 @@ class EBC_OT_camera_remove(Operator):
 
     def execute(self, context):
         s = props.settings(context)
-        s.cameras.remove(s.cameras_index)
-        s.cameras_index = max(0, min(s.cameras_index, len(s.cameras) - 1))
+        util.remove_active(s, "cameras", "cameras_index")
         return {"FINISHED"}
 
 
@@ -446,10 +431,7 @@ class EBC_OT_camera_bind_marker(Operator):
         scene = context.scene
         cam = s.cameras[s.cameras_index].camera
         frame = scene.frame_current
-        marker = next((m for m in scene.timeline_markers if m.frame == frame), None)
-        if marker is None:
-            marker = scene.timeline_markers.new(cam.name, frame=frame)
-        marker.camera = cam
+        cameras.bind_marker(scene, frame, cam)
         scene.camera = cam
         self.report({"INFO"}, f"{cam.name} bound to frame {frame}")
         return {"FINISHED"}
@@ -464,9 +446,9 @@ class EBC_OT_match_game_aspect(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        aspect = runtime.get_game().aspect or g.GAME_DEFAULT_ASPECT
+        aspect = cameras.game_aspect()
         r = context.scene.render
-        r.resolution_x, r.pixel_aspect_x, r.pixel_aspect_y = g.aspect_settings(aspect, r.resolution_y)
+        r.resolution_x, r.pixel_aspect_x, r.pixel_aspect_y = cam_math.aspect_settings(aspect, r.resolution_y)
         self.report({"INFO"}, f"Render {r.resolution_x} x {r.resolution_y}, aspect {aspect:.4f}")
         return {"FINISHED"}
 
@@ -483,12 +465,11 @@ def game_camera(context, create: bool = True):
         if existing is not None and existing.type == "CAMERA":
             cam = existing
         elif create:
-            cam = new_camera(context, record.GAME_CAMERA_NAME, None)
+            cam = cameras.new_camera(context, record.GAME_CAMERA_NAME, None)
         else:
             return None
         s.record_camera = cam
-    if all(item.camera != cam for item in s.cameras):
-        s.cameras.add().camera = cam
+    cameras.ensure_listed(s, cam)
     return cam
 
 
@@ -501,14 +482,14 @@ class EBC_OT_record_start(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.get_game().connected and not record.is_recording()
+        return runtime.get_game().connected and not record.is_recording() and not screenshot.busy()
 
     def execute(self, context):
         s = props.settings(context)
-        if s.record_mode == "STEP":
+        if s.record_mode == record.RecordMode.STEP:
             runtime.devserver.set_port(s.devserver_port)
-            if runtime.devserver.status() is None:
-                self.report({"WARNING"}, f"Frame by frame needs the DevServer: {runtime.devserver.last_error}")
+            if runtime.devserver.status() is None and not runtime.dsu.connected:
+                self.report({"WARNING"}, record.STEP_UNAVAILABLE)
                 return {"CANCELLED"}
         cam = game_camera(context)
         if cam.constraints:
@@ -557,13 +538,6 @@ def _add_driver_var(driver, name, id_type, id_, path):
     var.targets[0].data_path = path
 
 
-def _bind_marker(scene, frame, cam):
-    marker = next((m for m in scene.timeline_markers if m.frame == frame), None)
-    if marker is None:
-        marker = scene.timeline_markers.new(cam.name, frame=frame)
-    marker.camera = cam
-
-
 def build_transition(context, src, dst, start: int, frames: int, easing: str):
     """EBC_Blend camera: Copy Transforms of ``src`` then of ``dst`` whose influence goes 0 -> 1.
 
@@ -578,11 +552,11 @@ def build_transition(context, src, dst, start: int, frames: int, easing: str):
     """
     scene = context.scene
     s = props.settings(context)
-    coll = _rig_collection(context)
+    coll = cameras.rig_collection(context)
     data = bpy.data.cameras.new(BLEND_NAME)
     for attr in ("sensor_width", "sensor_height", "sensor_fit", "clip_start", "clip_end", "shift_x", "shift_y"):
         setattr(data, attr, getattr(src.data, attr))
-    ortho_a, ortho_b = sync.is_ortho(src), sync.is_ortho(dst)
+    ortho_a, ortho_b = cameras.is_ortho(src), cameras.is_ortho(dst)
     blend = bpy.data.objects.new(BLEND_NAME, data)
     coll.objects.link(blend)
     c_from = blend.constraints.new("COPY_TRANSFORMS")
@@ -618,8 +592,8 @@ def build_transition(context, src, dst, start: int, frames: int, easing: str):
         _add_driver_var(drv, "t", "OBJECT", blend, path)
         drv.expression = "a + (b - a) * t"
     s.cameras.add().camera = blend
-    _bind_marker(scene, start, blend)
-    _bind_marker(scene, end, dst)
+    cameras.bind_marker(scene, start, blend)
+    cameras.bind_marker(scene, end, dst)
     return blend
 
 
@@ -646,7 +620,7 @@ class EBC_OT_transition_add(Operator):
         blend = build_transition(context, src, dst, start, s.transition_frames, s.transition_easing)
         context.scene.camera = blend  # what the start marker binds anyway
         msg = f"{blend.name}: {src.name} -> {dst.name}, frames {start}-{start + s.transition_frames}"
-        if sync.is_ortho(src) != sync.is_ortho(dst):
+        if cameras.is_ortho(src) != cameras.is_ortho(dst):
             msg += f"; projection switches at frame {start + s.transition_frames // 2} (mid-transition)"
         self.report({"INFO"}, msg)
         return {"FINISHED"}
@@ -675,60 +649,221 @@ def state_path(slot: str) -> str:
     """Savestate file for a slot, in the extension's user directory."""
     try:
         base = bpy.utils.extension_path_user((__package__ or "").rpartition(".ui")[0], path="states", create=True)
-    except Exception:  # not installed as an extension (dev checkout)
+    except Exception:  # not installed as an extension (dev checkout)  # noqa: BLE001
         base = os.path.join(tempfile.gettempdir(), "ebc_states")
         os.makedirs(base, exist_ok=True)
     return os.path.join(base, f"slot{slot}.sav")
 
 
+CONTROL_ACTIONS = [
+    ("CHECK", "Check", "Check which emulator control answers (DevServer, Dolphin hotkeys)"),
+    ("TOGGLE", "Pause / Resume", "Pause the emulation when it runs, resume it when it is paused"),
+    ("PAUSE", "Pause", "Pause the emulation"),
+    ("RESUME", "Resume", "Resume the emulation"),
+    (
+        "STEP",
+        "Next frame",
+        "Advance one frame (Game pause and Dolphin hotkeys: exactly one; DevServer: approximate). When it runs, pause",
+    ),
+    ("SAVE", "Save state", "Save a state in the selected slot"),
+    ("LOAD", "Load state", "Load the state of the selected slot"),
+]
+
+
+GAME_PAUSE_ACTIONS = frozenset({"TOGGLE", "PAUSE", "RESUME", "STEP"})  # what Game pause (debug mode) takes over
+
+
 class EBC_OT_devserver(Operator):
-    """Control the emulator through the Dolphin DevServer"""
+    """Control the emulator: through the Dolphin DevServer when it answers, else through Dolphin's own
+    hotkeys (EBC's DSU pad)"""
 
     bl_idname = "ebc.devserver"
     bl_label = "Emulator control"
 
-    action: EnumProperty(
-        items=[
-            ("CHECK", "Check", "Check whether the DevServer answers"),
-            ("PAUSE", "Pause", "Pause the emulation"),
-            ("RESUME", "Resume", "Resume the emulation"),
-            ("STEP", "Next frame", "Run until the game frame counter moves, then pause (approximate)"),
-            ("SAVE", "Save state", "Save a state in the selected slot"),
-            ("LOAD", "Load state", "Load the state of the selected slot"),
-        ],
-        default="CHECK",
-    )
+    action: EnumProperty(items=CONTROL_ACTIONS, default="CHECK")
+
+    @classmethod
+    def description(cls, context, properties):
+        return {ident: desc for ident, _name, desc in CONTROL_ACTIONS}.get(properties.action, cls.__doc__)
 
     def execute(self, context):
         s = props.settings(context)
+        if self.action != "CHECK" and record.drives_emulator():
+            # the recorder drives the same pad / DevServer frame by frame: never two drivers at once
+            self.report({"WARNING"}, "Stop the frame-by-frame recording first: it drives the emulator")
+            return {"CANCELLED"}
+        if s.game_pause and self.action in GAME_PAUSE_ACTIONS:  # memory writes: no DevServer / hotkeys
+            return self._game_pause()
         client = runtime.devserver
         client.set_port(s.devserver_port)
+        if self.action == "CHECK" or not client.available:
+            status = client.status()  # the DevServer may have appeared (or gone)
+            runtime.note_running(None if status is None else status.running)
         if self.action == "CHECK":
-            ok = client.status() is not None
-        elif self.action == "PAUSE":
-            ok = client.pause()
-        elif self.action == "RESUME":
-            ok = client.resume()
-        elif self.action == "STEP":
-            ok = client.advance_frame(runtime.get_game().current_frame)
-        elif self.action == "SAVE":
-            # a savestate keeps the RAM: never one in orthographic (the next sync tick sets it again)
-            runtime.get_game().restore_projection()
-            ok = client.save_state(state_path(s.state_slot))
-        else:
-            runtime.get_game().restore_projection()
-            ok = client.load_state(state_path(s.state_slot))
-            if ok:
-                # a savestate brings its own RAM back: Code Menu values (the camera lock), colours...
-                runtime.get_game().reapply_persistent()
-        if not ok:
-            self.report({"WARNING"}, f"DevServer: {client.last_error or 'unreachable'}")
+            kind = runtime.control_kind()
+            self.report({"INFO"}, f"Emulator control: {emucontrol.LABELS[kind]}")
+            return {"FINISHED"} if kind != emucontrol.NONE else {"CANCELLED"}
+        if self.action in {"SAVE", "LOAD"}:
+            runtime.get_game().before_savestate()
+        ctl = runtime.control()
+        if ctl is None:
+            self.report(
+                {"WARNING"},
+                "No emulator control: DevServer unreachable and Dolphin not configured for EBC "
+                f"({runtime.dsu.error or 'Configure Dolphin for EBC, then restart Dolphin'})",
+            )
             return {"CANCELLED"}
+        ok = self._run(ctl, s)
+        if not ok and ctl is client and runtime.dsu.connected:  # the DevServer went away: hotkeys
+            ctl = runtime.dsu_control
+            ok = self._run(ctl, s)
+        if not ok:
+            name = "DevServer" if ctl is client else "Dolphin hotkeys"
+            self.report({"WARNING"}, f"{name}: {ctl.last_error or 'unreachable'}")
+            return {"CANCELLED"}
+        if ctl is not client and ctl.last_error:
+            self.report({"INFO"}, ctl.last_error)
+        return {"FINISHED"}
+
+    def _game_pause(self):
+        """Play / Pause and Next frame through P+'s debug pause (core/debugmode.py): memory writes only."""
+        debug = runtime.get_game().debug
+        run = {"TOGGLE": debug.toggle, "PAUSE": debug.pause, "RESUME": debug.resume, "STEP": debug.step}
+        if not run[self.action]():
+            self.report({"WARNING"}, f"Game pause: {debug.last_error or 'failed'}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+    def _run(self, ctl, s) -> bool:
+        game = runtime.get_game()
+        action = self.action
+        if action == "TOGGLE":
+            running = _is_running(ctl)
+            action = "PAUSE" if running or (running is None and runtime.emulation_running is not False) else "RESUME"
+        if action == "PAUSE":
+            ok = ctl.pause()
+            runtime.note_running(False if ok else None)
+            return ok
+        if action == "RESUME":
+            ok = ctl.resume()
+            runtime.note_running(True if ok else None)
+            return ok
+        if action == "STEP":
+            ok = ctl.advance_frame(game.current_frame)
+            runtime.note_running(False if ok else None)  # a Frame Advance leaves the game paused
+            return ok
+        if self.action == "SAVE":
+            return game.save_state(lambda: ctl.save_state(state_path(s.state_slot)))
+        ok = ctl.load_state(state_path(s.state_slot))
+        if ok:
+            if ctl is runtime.devserver:
+                game.after_state_load()
+            else:  # Dolphin loads the slot on its own thread, a little later
+                for delay in (0.3, 1.0):
+                    bpy.app.timers.register(_reapply_later, first_interval=delay)
+        return ok
+
+
+def _is_running(ctl) -> bool | None:
+    """Ask the emulator now (an action, not a redraw): the DevServer status, else the frame counters."""
+    if ctl is runtime.devserver:
+        status = ctl.status()
+        return None if status is None else status.running
+    return ctl.is_running()
+
+
+def _reapply_later():
+    try:
+        runtime.get_game().after_state_load()
+    except Exception as exc:  # never raise from a timer  # noqa: BLE001
+        print(f"[EBC] re-apply after state load failed: {exc}")
+    return None
+
+
+class EBC_OT_screenshot(Operator):
+    """Take a full-quality screenshot with Dolphin (its own capture, at the internal resolution), named
+    <stage>_<game frame>_<date-time>.png (e.g. Battlefield_L_600_20261011-132255.png; EBC_<scene>_... when
+    no stage is identified), in the Screenshot folder (Options; by default Dolphin's own). When the game
+    is paused, it advances 4 frames to take it (with your camera)"""
+
+    bl_idname = "ebc.screenshot"
+    bl_label = "Screenshot"
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.get_game().connected and not screenshot.busy() and not record.drives_emulator()
+
+    def execute(self, context):
+        err = screenshot.start(context)
+        if err:
+            self.report({"WARNING"}, err)
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class EBC_OT_configure_dolphin(Operator):
+    """Close Dolphin first. Writes once in Dolphin's configuration: EBC's DSU pad as an input source, the
+    Screenshot, Toggle Pause, Frame Advance and Save/Load State Slot 10 hotkeys bound to it (your keys are
+    kept), hotkeys active without window focus. Backups: <file>.ebc-backup"""
+
+    bl_idname = "ebc.configure_dolphin"
+    bl_label = "Configure Dolphin for EBC"
+
+    folder: StringProperty(name="Folder", description="Dolphin folder to configure (empty: preferences / detected)")
+
+    def execute(self, context):
+        p = props.prefs()
+        props.load_paths_from_prefs()
+        if self.folder:
+            paths, how = dolphin_config.locate(self.folder)
+        else:
+            paths, how = dolphin_config.locate(p.dolphin_folder, runtime.dolphin_paths)
+        if paths is None:
+            self.report({"ERROR"}, how)
+            return {"CANCELLED"}
+        try:
+            running = dolphin_config.dolphin_uses(paths.config, names=dme_names())
+            result = dolphin_config.install(paths.config, int(p.dsu_port), running=running)
+        except OSError as exc:
+            self.report({"ERROR"}, f"Could not write Dolphin's configuration: {exc}")
+            return {"CANCELLED"}
+        if not result.ok:
+            self.report({"ERROR"}, result.message)
+            return {"CANCELLED"}
+        if self.folder:
+            props.remember_detected(paths)
+        lines = [result.message + f" ({how})"]
+        if result.changed:
+            lines.append(f"Changed: {', '.join(result.changed)}; backups: {', '.join(result.backups) or 'kept'}")
+        lines += result.notes
+        lines.append(
+            "Dolphin's hotkeys now work without its window focused: your keyboard keys (F9, F10, F1-F8...) "
+            "also act on Dolphin while you type in Blender"
+        )
+        lines.append("Start Dolphin, then Connect: the Emulator control panel shows 'Dolphin hotkeys (DSU)'")
+        for line in lines:
+            self.report({"INFO"}, line)
+        return {"FINISHED"}
+
+
+class EBC_OT_notify(Operator):
+    """Show a message in the status bar (used by background tasks)"""
+
+    bl_idname = "ebc.notify"
+    bl_label = "EBC message"
+    bl_options = {"INTERNAL"}
+
+    level: StringProperty(default="INFO")
+    message: StringProperty(default="")
+
+    def execute(self, context):
+        self.report({self.level if self.level in {"INFO", "WARNING", "ERROR"} else "INFO"}, self.message)
         return {"FINISHED"}
 
 
 classes = (
     EBC_OT_connect,
+    EBC_OT_clip_helper,
     EBC_OT_disconnect,
     EBC_OT_sync_start,
     EBC_OT_sync_stop,
@@ -747,4 +882,7 @@ classes = (
     EBC_OT_transition_add,
     EBC_OT_hand_back,
     EBC_OT_devserver,
+    EBC_OT_screenshot,
+    EBC_OT_configure_dolphin,
+    EBC_OT_notify,
 )

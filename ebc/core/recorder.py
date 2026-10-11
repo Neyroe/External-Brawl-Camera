@@ -13,6 +13,10 @@ Two modes (docs/research/camera-motion.md 8):
 * **Frame by frame** (DevServer): pause, then for each frame resume until the
   counter moves, wait ``settle``, pause, read. Measured identical to the bit
   to a continuous run on a replay (120/120 frames).
+* **Frame by frame** (official Dolphin, DSU hotkeys, ``FrameAdvanceRecorder``):
+  Frame Advance pauses a running game without advancing, then each press runs
+  exactly one frame and pauses (docs/research/screenshot.md 1.5); the block is
+  read once the counter moved and the block is stable.
 
 The worker never touches Blender: samples are queued and the UI drains them
 from a ``bpy.app.timers`` callback on the main thread.
@@ -25,8 +29,12 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol
 
 from .camera import CameraSample, parse_camera_block
+
+if TYPE_CHECKING:
+    from .game import Game
 
 ReadFn = Callable[[int, int], "bytes | None"]
 
@@ -57,11 +65,23 @@ class RecordStats:
         self.captured += 1
 
 
-class _Worker:
+class Worker:
     """Shared thread plumbing: start/stop, sample queue, stats."""
 
-    def __init__(self, read: ReadFn, frame_addr: int, block_addr: int, block_size: int, end_frame: int = 0) -> None:
+    def __init__(
+        self,
+        read: ReadFn,
+        frame_addr: int,
+        block_addr: int,
+        block_size: int,
+        end_frame: int = 0,
+        *,
+        clock: Callable[[], float] = time.perf_counter,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.read = read
+        self.clock = clock  # injected by the tests (a simulated game)
+        self.sleep = sleep
         self.frame_addr = frame_addr
         self.block_addr = block_addr
         self.block_size = block_size
@@ -70,6 +90,12 @@ class _Worker:
         self.queue: deque[CameraSample] = deque()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @classmethod
+    def for_game(cls, game: Game, *args, **kwargs):
+        """This recorder on ``game``'s frame counter and gfCamera block (read with ``game.read_bytes``)."""
+        p = game.p
+        return cls(game.read_bytes, p.MATCH_FRAME.addr, p.CAM_RECORD_BASE, p.CAM_RECORD_SIZE, *args, **kwargs)
 
     # -- lifecycle ---------------------------------------------------------------
 
@@ -96,7 +122,7 @@ class _Worker:
     def _safe_run(self) -> None:
         try:
             self.run()
-        except Exception as exc:  # never die silently: the UI shows it
+        except Exception as exc:  # never die silently: the UI shows it  # noqa: BLE001
             self.stats.error = f"recording stopped: {exc!r}"
         finally:
             self.finish()
@@ -127,8 +153,26 @@ class _Worker:
     def reached_end(self, frame: int) -> bool:
         return self.end_frame > 0 and frame >= self.end_frame
 
+    def stable_block(self, gap: float) -> bytes | None:
+        """The camera block once two reads ``gap`` apart agree (or the last one read on stop),
+        None when it cannot be read."""
+        block = self.read_block()
+        while block is not None and not self._stop.is_set():
+            self.sleep(gap)
+            again = self.read_block()
+            if again == block:
+                break
+            block = again
+        return block
 
-class LiveRecorder(_Worker):
+    def wait(self, seconds: float, step: float = 0.005) -> None:
+        """Sleep ``seconds`` in steps, ending early on stop."""
+        end = self.clock() + seconds
+        while not self._stop.is_set() and self.clock() < end:
+            self.sleep(step)
+
+
+class LiveRecorder(Worker):
     """Full-speed recording by polling the frame counter (no pause)."""
 
     def __init__(
@@ -146,13 +190,11 @@ class LiveRecorder(_Worker):
         clock: Callable[[], float] = time.perf_counter,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        super().__init__(read, frame_addr, block_addr, block_size, end_frame)
+        super().__init__(read, frame_addr, block_addr, block_size, end_frame, clock=clock, sleep=sleep)
         self.min_delay = min_delay
         self.settle_timeout = settle_timeout
         self.poll = poll
         self.max_errors = max_errors
-        self.clock = clock
-        self.sleep = sleep
 
     def run(self) -> None:
         last_frame: int | None = None
@@ -209,17 +251,15 @@ class LiveRecorder(_Worker):
         return None
 
 
-class Stepper:
+class Stepper(Protocol):
     """What frame-by-frame recording needs from the DevServer (pause / resume)."""
 
-    def pause(self) -> bool:  # pragma: no cover - protocol
-        raise NotImplementedError
+    def pause(self) -> bool: ...
 
-    def resume(self) -> bool:  # pragma: no cover - protocol
-        raise NotImplementedError
+    def resume(self) -> bool: ...
 
 
-class FrameStepRecorder(_Worker):
+class FrameStepRecorder(Worker):
     """Pause, then resume -> counter moves -> camera updated -> pause -> read, frame after frame.
 
     "Camera updated" = the gfCamera block changed from what it was when the
@@ -235,7 +275,7 @@ class FrameStepRecorder(_Worker):
         frame_addr: int,
         block_addr: int,
         block_size: int,
-        stepper,
+        stepper: Stepper,
         end_frame: int = 0,
         *,
         settle: float = 0.012,
@@ -245,14 +285,12 @@ class FrameStepRecorder(_Worker):
         clock: Callable[[], float] = time.perf_counter,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        super().__init__(read, frame_addr, block_addr, block_size, end_frame)
+        super().__init__(read, frame_addr, block_addr, block_size, end_frame, clock=clock, sleep=sleep)
         self.stepper = stepper
         self.settle = settle
         self.min_delay = min_delay
         self.frame_timeout = frame_timeout
         self.resume_at_end = resume_at_end
-        self.clock = clock
-        self.sleep = sleep
 
     def run(self) -> None:
         if not self.stepper.pause():
@@ -297,3 +335,157 @@ class FrameStepRecorder(_Worker):
     def finish(self) -> None:
         if self.resume_at_end:
             self.stepper.resume()
+
+
+class FrameAdvancer(Protocol):
+    """What frame-by-frame recording needs from Dolphin's hotkeys (``emucontrol.DSUControl``)."""
+
+    def is_running(self) -> bool | None: ...
+
+    def advance_frame(self) -> bool: ...
+
+    def toggle_pause(self) -> bool: ...
+
+
+class FrameAdvanceRecorder(Worker):
+    """Frame Advance, counter moved, block stable -> read, frame after frame (no DevServer).
+
+    The emulator is paused first (a Frame Advance while running pauses without
+    advancing). Each press runs exactly one frame and pauses again, so the
+    camera of the new frame is complete and does not change: it is read once
+    two reads ``settle`` apart agree. The game is resumed at the end if it was
+    running at the start.
+
+    Measured on the P+ 3.2 AppImage: right after a savestate load, the press that
+    follows the first step can be dropped by Dolphin (the step is not finished
+    although the counter moved): a press that does not move the counter within
+    ``frame_timeout`` is pressed again (``retries``); a double step would show
+    in ``not_one``.
+    """
+
+    def __init__(
+        self,
+        read: ReadFn,
+        frame_addr: int,
+        block_addr: int,
+        block_size: int,
+        advancer: FrameAdvancer,
+        end_frame: int = 0,
+        *,
+        settle: float = 0.004,
+        paused_for: float = 0.03,
+        first_settle: float = 0.4,
+        frame_timeout: float = 0.3,
+        attempts: int = 4,
+        clock: Callable[[], float] = time.perf_counter,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        super().__init__(read, frame_addr, block_addr, block_size, end_frame, clock=clock, sleep=sleep)
+        self.advancer = advancer
+        self.settle = settle
+        self.paused_for = paused_for
+        self.first_settle = first_settle
+        self.frame_timeout = frame_timeout
+        self.attempts = attempts
+        self.retries = 0  # presses Dolphin dropped and that were pressed again
+        self.was_running = False
+        self.steps = 0
+        self.not_one = 0  # presses that did not move the counter by exactly one frame
+
+    def _wait_frame(self, start: int) -> int | None:
+        deadline = self.clock() + self.frame_timeout
+        frame = start
+        while frame == start and self.clock() < deadline and not self._stop.is_set():
+            self.sleep(0.001)
+            frame = self.read_frame()
+            if frame is None:
+                return None
+        return frame
+
+    def run(self) -> None:
+        if not self._pause_first():
+            return
+        while not self._stop.is_set():
+            start = self.read_frame()
+            if start is None:
+                self.stats.error = "the game frame counter cannot be read"
+                return
+            frame = self._advance_one(start)
+            if frame is None:
+                return
+            if not self.stats.captured:
+                # The first step after a pause or a savestate load can be slow (measured: Dolphin
+                # still running ~0.1-0.3 s after the counter moved, a press then is dropped and the
+                # camera of that frame is not written yet): let it finish before reading.
+                self.wait(self.first_settle)
+            if frame != start + 1 and self.stats.captured:
+                # (the first step after a pause taken mid-frame may be +2: Dolphin stops a step at
+                # the first field boundary after a NEW frame was presented, Core::Callback_NewField)
+                self.not_one += 1
+            block = self.stable_block(self.settle)
+            if block is None:
+                self.stats.error = "camera read failed"
+                return
+            self.push(frame, block)
+            if self.reached_end(frame):
+                return
+            self._settle_paused(frame)
+
+    def _pause_first(self) -> bool:
+        """Pause a running game (a Frame Advance pauses without advancing). False on an error."""
+        running = self.advancer.is_running()
+        if running is None:
+            self.stats.error = "the game frame counter cannot be read"
+            return False
+        self.was_running = running
+        if running:
+            if not self.advancer.advance_frame():  # pauses without advancing
+                self.stats.error = "Frame Advance hotkey failed (Dolphin listening to EBC?)"
+                return False
+            if self.advancer.is_running():
+                self.stats.error = "Dolphin did not pause (Frame Advance hotkey bound?)"
+                return False
+        return True
+
+    def _advance_one(self, start: int) -> int | None:
+        """One Frame Advance (pressed again when Dolphin drops it): the new frame, None to stop
+        (the error set, unless stopped)."""
+        frame: int | None = start
+        for _attempt in range(self.attempts):
+            if not self.advancer.advance_frame():
+                self.stats.error = "Frame Advance hotkey failed"
+                return None
+            self.steps += 1
+            frame = self._wait_frame(start)
+            if frame != start or self._stop.is_set():
+                break
+            self.retries += 1  # dropped by Dolphin (still finishing the previous step): again
+        if frame is None:
+            self.stats.error = "the game frame counter cannot be read"
+            return None
+        if frame == start:
+            if not self._stop.is_set():
+                self.stats.error = "the game frame did not move (not in a match, or Frame Advance not bound?)"
+            return None
+        return frame
+
+    def _settle_paused(self, frame: int) -> None:
+        """Wait until the counter has held still for ``paused_for`` (more than a frame).
+
+        Measured on the P+ 3.2 AppImage: a Frame Advance pressed as soon as the counter
+        moved is ignored (Dolphin is still finishing the previous step and has not paused
+        yet; ``Core::DoFrameStep`` drops it), and the recording stalls.
+        """
+        last, since = frame, self.clock()
+        deadline = since + self.frame_timeout
+        while not self._stop.is_set() and self.clock() < deadline:
+            if self.clock() - since >= self.paused_for:
+                return
+            self.sleep(0.002)
+            now = self.read_frame()
+            if now != last:
+                last, since = now, self.clock()
+
+    def finish(self) -> None:
+        if self.was_running:
+            self.advancer.toggle_pause()

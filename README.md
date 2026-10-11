@@ -38,22 +38,30 @@ Nothing to install with pip anymore: the memory library is bundled. Coming from 
 - One Dolphin at a time per Blender session.
 - Linux: `kernel.yama.ptrace_scope` must be 0 (`sudo sysctl kernel.yama.ptrace_scope=0`), and Blender must be a native install (not Flatpak/Snap).
 - EBC finds the Dolphin process itself (including the Project+ 3.2 AppImage). If you set `DME_DOLPHIN_PROCESS_NAME`, it must match the running Dolphin.
-- Pause, frame advance and savestates from Blender need a Dolphin build with the DevServer; everything else works on any Dolphin, including the Project+ 3.2 AppImage.
+- Pause, frame advance, savestates and screenshots from Blender use Dolphin's own hotkeys: click **Configure Dolphin for EBC** once, with Dolphin closed (tested on the Project+ 3.2 AppImage on Linux, not yet on Windows).
 - Project M 3.6 / 3.6R: not tested.
 
 ## FEATURES
 **Camera**
 1. Blender camera drives the Brawl camera, or the reverse — exact to the pixel, no lag, no shake
-2. Native camera freeze: no Code Menu needed, survives pause, hand back to the game camera at any frame
-3. FOV, roll, near/far clip, screen shake removal
-4. new ! Orthographic and one-click **Isometric** / **Dimetric 2:1** views
-5. new ! Multiple cameras: one click to cut, or switch on timeline markers
-6. new ! **Record** the game's own camera frame by frame into Blender, and blend between it and yours
+2. Native camera freeze: no Code Menu needed, hand back to the game camera at any frame
+3. new ! Drives Brawl's own **pause (photo) camera** too, exact to the pixel
+4. FOV, roll, near/far clip, screen shake removal
+5. new ! Orthographic and one-click **Isometric** / **Dimetric 2:1** views
+6. new ! Multiple cameras: one click to cut, or switch on timeline markers
+7. new ! **Record** the game's own camera frame by frame into Blender, and blend between it and yours
+8. new ! **Skip the stage intro camera**: your camera from the first frame of the match
+9. new ! **Near / Far objects**: an empty attached to the camera sets the clip planes (its Z is the value)
 
 **Scene & timeline**
 1. Player positions in the scene, one-click rig creation
 2. Blender timeline follows the game frame (or starts at a chosen frame)
-3. new ! Pause, next frame, save/load state from Blender (DevServer)
+3. new ! Pause, next frame, save/load state and full-quality **Screenshot** (named after the stage) from Blender, on any Dolphin
+4. new ! **Game pause** through the P+ debug mode: the game stops, Dolphin keeps running, exact one-frame steps
+5. new ! **Pause at frame**: the game pauses by itself on a chosen frame, per stage
+6. new ! **Stages**: the stage played (name and ID) in Blender; a camera, a collection, near/far objects and a pause frame per stage, applied on each match
+7. new ! **Load stage**: pick a stage ID, the match reloads on it with the same fighters
+8. new ! Every setting can be driven or keyframed
 
 **Green screen**
 1. Full-screen background colour with a working alpha (veil over the stage → flat key colour)
@@ -61,14 +69,13 @@ Nothing to install with pip anymore: the memory library is bundled. Coming from 
 3. new ! Per-character: each fighter **Normal**, **Colour** (flat tint) or **Hidden**, and **Isolate** one fighter on a flat background in one click *(experimental)*
 
 **Game display**
-1. HUD, debug menu, Draw DI, hurtboxes, character and stage visibility
+1. HUD, debug mode, Draw DI, hurtboxes, character and stage visibility
 2. Shadow light angles, music and sound effect volume
 
 Every setting is re-applied on a new match, and disconnecting restores everything EBC changed.
 
 Could be added in near futur:
-1. DevServer for the Project+ 3.2 Dolphin and Windows
-2. Screenshot, image & preview sequence from Blender
+1. Image & preview sequence from Blender
 
 ## CONTACT & SUPPORT
 You are free to ask me anything on discord at :

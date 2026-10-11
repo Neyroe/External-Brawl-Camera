@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "external_brawl_camera"
-version = "3.0.0"
+version = "3.1.1"
 name = "External Brawl Camera"
 tagline = "Drive the Super Smash Bros. Brawl camera from Blender"
 maintainer = "Neyroe"
@@ -24,7 +24,8 @@ wheels = [
 ]
 
 [permissions]
-network = "Optional local Dolphin DevServer (pause, frame step, states)"
+network = "Local only: Dolphin hotkeys (DSU pad, UDP), optional DevServer"
+files = "Dolphin hotkey configuration, screenshots, savestates"
 
 [build]
 paths_exclude_pattern = [

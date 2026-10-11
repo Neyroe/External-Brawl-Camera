@@ -835,21 +835,46 @@ function Install-Scene {
         Write-Info 'EBC works without it; you can add your own stage models.'
         return
     }
+    $name = [IO.Path]::GetFileName([Uri]::UnescapeDataString($asset))
+    # Download into LocalAppData first: Windows "Controlled folder access" (Defender)
+    # and OneDrive can refuse writes into Documents from curl.exe (curl error 23).
+    $cached = Join-Path $script:CacheDir $name
+    try {
+        if (-not (Test-Path -LiteralPath $cached)) { $a = $asset; Invoke-Change "download $a" { Save-Url $a $cached } }
+    } catch {
+        Write-Warn "Stages scene not downloaded: $($_.Exception.Message)"
+        Write-Warn "EBC works without it; get it by hand from the release page."
+        return
+    }
+    if (Test-DryRun) { $script:ScenePath = $cached; Write-Info "Scene: $cached"; return }
     $docs = [Environment]::GetFolderPath('MyDocuments')
     if (-not $docs) { $docs = $HOME }
-    $dest = Join-Path $docs 'EBC'
-    $file = Join-Path $dest ([IO.Path]::GetFileName([Uri]::UnescapeDataString($asset)))
-    if (Test-Path -LiteralPath $file) { Write-Info "Already downloaded: $file" }
-    else { $a = $asset; Invoke-Change "download $a" { Save-Url $a $file } }
-    $script:ScenePath = $file
-    if ($file -like '*.zip' -and -not (Test-DryRun)) {
-        $marker = Join-Path $dest '.extracted'
-        # Never overwrite a scene the user may have edited.
-        if (-not (Test-Path -LiteralPath $marker)) {
-            Expand-Archive -LiteralPath $file -DestinationPath $dest
-            [IO.File]::WriteAllText($marker, '')
+    $targets = @((Join-Path $docs 'EBC'), (Join-Path $script:LocalAppData 'EBC'))
+    foreach ($dest in $targets) {
+        try {
+            if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+            if ($name -like '*.zip') {
+                $marker = Join-Path $dest '.extracted'
+                # Never overwrite a scene the user may have edited.
+                if (-not (Test-Path -LiteralPath $marker)) {
+                    Expand-Archive -LiteralPath $cached -DestinationPath $dest -Force
+                    [IO.File]::WriteAllText($marker, '')
+                } else { Write-Info "Already extracted in $dest" }
+                $script:ScenePath = $dest
+            } else {
+                $file = Join-Path $dest $name
+                if (-not (Test-Path -LiteralPath $file)) { Copy-Item -LiteralPath $cached -Destination $file }
+                $script:ScenePath = $file
+            }
+            break
+        } catch {
+            Write-Warn "Cannot write the scene into $($dest): $($_.Exception.Message)"
+            $script:ScenePath = ''
         }
-        $script:ScenePath = $dest
+    }
+    if (-not $script:ScenePath) {
+        Write-Warn "Stages scene left in $cached (EBC works without it)."
+        $script:ScenePath = $cached
     }
     Write-Info "Scene: $script:ScenePath"
 }

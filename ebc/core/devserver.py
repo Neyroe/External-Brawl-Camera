@@ -2,7 +2,8 @@
 
 Protocol: TCP on 127.0.0.1, one text command per line, one answer per line,
 ``ok [payload]`` or ``err <message>``. Only the commands EBC needs are
-wrapped: ``status``, ``pause``, ``resume``, ``step`` and ``state save|load``.
+wrapped: ``status``, ``pause``, ``resume``, ``step``, ``state save|load`` and ``write`` (one code
+word, for Skip stage intro camera).
 
 Everything degrades quietly: if the port is closed every call returns
 ``None``/``False`` within ``timeout`` seconds and ``last_error`` says why.
@@ -160,6 +161,11 @@ class DevServerClient:
         if not moved:
             self.last_error = "the game frame did not change (not in a match?)"
         return paused and moved
+
+    def write_code(self, addr: int, word: int) -> bool:
+        """Write one code word with ``write`` (Dolphin's ApplyMemoryPatch: the JIT cache is
+        invalidated, unlike ``poke`` or DME). Used by Skip stage intro camera."""
+        return self._try(f"write 0x{addr:08X} {word & 0xFFFFFFFF:08X}") is not None
 
     def save_state(self, path: str) -> bool:
         return self._try(f"state save {path}") is not None

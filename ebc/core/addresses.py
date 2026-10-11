@@ -67,6 +67,30 @@ class Offset:
         return struct.calcsize(self.fmt)
 
 
+class GF:
+    """Offsets inside gfCamera (the same in every profile; the instance is ``CAM_RECORD_BASE``).
+
+    verified: measured in RAM on P+ 3.1.5 and 3.2 (docs/research/camera-freeze.md 4.2,
+    camera-motion.md 1, ortho-projection.md 1); the profile ``CAM_*`` fields are base + these.
+    """
+
+    VIEW = 0x00  # 3x4 view matrix
+    WORLD = 0x30  # 3x4 camera -> world (screen-shake angles included)
+    TARGET = 0x60
+    EYE = 0x6C
+    DIR = 0x78  # dir, up, right (9 floats)
+    ANGLES = 0xC0  # pitch, yaw, roll, distance, fov, zoom, fov_gx
+    ROLL = 0xC8
+    FOV_GX = 0xD8  # effective vertical FOV, after easing and zoom
+    NEAR = 0xDC  # near, far
+    ASPECT = 0xE4
+    BOUNDS = 0xE8  # orthographic top, bottom, left, right
+    PROJECTION = 0x100  # u32: 1 perspective, 0 orthographic
+    FRUSTUM = 0x104  # tangents (4 floats)
+    BLOCK_SIZE = 0x114  # what the native freeze writes in one go
+    RECORD_SIZE = 0x104  # what Record reads: up to the projection type
+
+
 class PPlus315:
     """Super Smash Bros. Brawl (RSBE01) + Project+ 3.1.5 (vanilla)."""
 
@@ -88,6 +112,15 @@ class PPlus315:
         0x8062B420,
         ">I",
         "verified: game frames since GO. 0 in menus, during the intro and on the results screen; frozen in pause.",
+    )
+    EMU_TICK = Field(
+        "emu_tick",
+        0x805A07BC,
+        ">I",
+        "verified on P+ 3.2 (AppImage, DME scan 2026-10-10, docs/research/screenshot.md 8): +1 per frame on the "
+        "CSS AND in a match, frozen while Dolphin is paused, +1 per Frame Advance. In the DOL's .sbss (same "
+        "address on 3.1.5, deduced: P+ does not move the DOL). What it counts is not identified (deduced: a "
+        "per-frame SDK/system counter). Used only to tell running from paused, together with MATCH_FRAME.",
     )
     MATCH_ENTRY_TIMER = Field(
         "match_entry_timer",
@@ -177,7 +210,7 @@ class PPlus315:
     # gfCamera +0x00..+0x104 in one read (Record, Brawl -> Blender): world matrix, target, eye, roll, fov_gx,
     # and the projection (ortho bounds + type).
     CAM_RECORD_BASE = 0x805B6D20
-    CAM_RECORD_SIZE = 0x104
+    CAM_RECORD_SIZE = GF.RECORD_SIZE
     CAM_ROT_Z = Field("cam_rot_z", 0x805B6DE8, ">f", "verified: camera roll in radians, never rewritten by the game.")
     CAM_FRONT_DEPTH = Field("cam_front_depth", 0x805B6DFC, ">f", "verified: near plane, default 1, never rewritten.")
     CAM_BACK_DEPTH = Field("cam_back_depth", 0x805B6E00, ">f", "verified: far plane, default 1e6, never rewritten.")
@@ -213,16 +246,17 @@ class PPlus315:
     )
     CAM_IG_POSITION = Field("cam_ig_position", 0x805B6D8C, ">3f", "verified: eye; kept only with the camera lock.")
     CAM_IG_BLOCK = Field("cam_ig_block", 0x805B6D80, ">6f", "CAM_IG_ORIGIN + CAM_IG_POSITION in one write.")
-    # Pause camera (cmPhotoController at 0x806636A0). Reset on every pause entry.
-    CAM_PAUSE_OFFSET = Field(
-        "cam_pause_offset",
+    # Pause camera (cmPhotoController at 0x806636A0). Reset on every pause entry. Only the unfrozen path
+    # (and the hand back in pause) writes these: frozen, EBC stops the controller (PHOTO_MODE) and
+    # writes gfCamera itself. Unfrozen, the controller forces its FOV (stage pause parameters) and the
+    # pad moves the camera too (pause-camera.md 3).
+    CAM_PAUSE_BLOCK = Field(
+        "cam_pause_block",
         0x806636C8,
-        ">3f",
-        "verified: target OFFSET from the pause subject (not an absolute origin). (0, 1, 0) on pause entry.",
+        ">6f",
+        "verified: +0x00 target OFFSET from the pause subject (not an absolute origin; (0, 1, 0) on pause "
+        "entry), +0x0C pitch, yaw in radians (-0.2269, 0), +0x14 eye-target distance (40). One write.",
     )
-    CAM_PAUSE_ANGLES = Field("cam_pause_angles", 0x806636D4, ">2f", "verified: pitch, yaw in radians (-0.2269, 0).")
-    CAM_PAUSE_DISTANCE = Field("cam_pause_distance", 0x806636DC, ">f", "verified: eye-target distance (40).")
-    CAM_PAUSE_BLOCK = Field("cam_pause_block", 0x806636C8, ">6f", "offset(3) + pitch + yaw + distance in one write.")
     CAM_PAUSE_FOCUS = Field(
         "cam_pause_focus", 0x806636E0, ">i", "verified: pause subject, -1 = stage, else 0-based port. An int."
     )
@@ -253,11 +287,67 @@ class PPlus315:
         "the whole derived block (CAM_BLOCK_SIZE). Lost when the controller is rebuilt: re-assert every tick.",
     )
     AI_UPDATE_BIT = 0x10
+    # -- Pause camera freeze (docs/research/pause-camera.md) --------------------
+    CC_PHOTO_CONTROLLER = Offset(
+        "camera_controller.photo",
+        0x68,
+        ">I",
+        "verified (pause-camera.md 1): cmPhotoController* (kind 7, the pause / snapshot camera), 0x806636A0. "
+        "CameraController+0x4C.. holds one pointer per controller, +0x48 the current one.",
+    )
+    PHOTO_VTABLE = 0x80454F28  # verified: [photo+4], RTTI "cmPhotoController": guard with PHOTO_CAMERA
+    PHOTO_CAMERA = Offset("photo.camera", 0x00, ">I", "verified: the gfCamera* it drives, 0x805B6D20: guard")
+    PHOTO_MODE = Offset(
+        "photo.mode",
+        0x0C,
+        ">I",
+        "verified (pause-camera.md 2, fn_800A7500 disassembled + measured): 0 = photo camera (fn_800A7528: "
+        "pad input, easing, FOV from the stage pause parameters, gfCamera::update), 1 = scripted look "
+        "(fn_800A85AC), any other value = update returns at once. Only the constructor writes it (0): never "
+        "reset by a pause, a resume or a new match. EBC writes PHOTO_MODE_FROZEN while it freezes the camera: "
+        "nobody writes gfCamera in pause, EBC writes the whole block (held bit for bit, C-stick ignored).",
+    )
+    PHOTO_MODE_FROZEN = 2
     # gfCamera +0x00..+0x114: what gfCamera::update derives (+ near, far, aspect, viewport, flags kept).
-    CAM_BLOCK_SIZE = 0x114
+    CAM_BLOCK_SIZE = GF.BLOCK_SIZE
 
     # -- Code Menu (u32 values, written as their low byte) ---------------------
-    DEBUG_MENU = Field("debug_menu", 0x804E0D33, ">B", "verified layout (low byte of u32 0x804E0D30); effect untested.")
+    DEBUG_MENU = Field(
+        "debug_menu",
+        0x804E0D33,
+        ">B",
+        "verified (2026-10-11, DevServer, docs/research/debug-mode.md): low byte of u32 0x804E0D30, the Code "
+        "Menu's 'Debug Mode'. Copied every frame by the Code Menu hook (0x80029574) into DEBUG_MODE_GAME: "
+        "1 there within one frame, 0 again when cleared.",
+    )
+
+    # -- Debug mode: game pause and frame advance (docs/research/debug-mode.md) --------------
+    DEBUG_MODE_GAME = Field(
+        "debug_mode_game",
+        0x80583FFF,
+        ">B",
+        "verified: the game's copy of the Code Menu Debug Mode (bit 0x01), tested by P+'s Debug Controls "
+        "Gecko code (u16 0x80583FFE & 1). Read only: the Code Menu rewrites it every frame.",
+    )
+    DEBUG_PAUSE = Field(
+        "debug_pause",
+        0x805B8A0B,
+        ">B",
+        "verified: gfTaskScheduler (0x805B8A00) +0x0B, pause flags read by gfTaskScheduler::process "
+        "(0x8002E578, P+ hook 0x8002E5AC). 0x02 = debug pause (Start in Debug Mode toggles it), 0x01 = Code "
+        "Menu open, 0x04 = unpause request. Any bit stops every task pass; the debug pause alone still runs "
+        "pass 0. Dolphin keeps running: memory writes and the frozen camera reach the picture. Works with "
+        "Debug Mode off too.",
+    )
+    DEBUG_PAUSE_BIT = 0x02
+    DEBUG_STEP = Field(
+        "debug_step",
+        0x805B8A0A,
+        ">B",
+        "verified: gfTaskScheduler +0x0A, frame advance request. Non-zero while DEBUG_PAUSE has 0x02: the next "
+        "frame runs whole, then the P+ hook at 0x8002E68C writes 0 (MATCH_FRAME +1 exactly per request, "
+        "measured). Z in Debug Mode writes u16 0x0102 here.",
+    )
     DISPLAY_HURTBOX = Field(
         "display_hurtbox",
         0x804E0D5F,
@@ -393,6 +483,126 @@ class PPlus315:
     # ftKind values with special handling.
     KIND_POPO = 0x0F
     KIND_NANA = 0x10  # deduced: Ice Climbers = two active instances in one entry
+
+    # -- Stage identity (docs/research/stage-identity.md 1.4; same addresses on 3.1.5 and 3.2) --
+    SCENE_MANAGER = Field(
+        "scene_manager",
+        0x805A0060,
+        ">I",
+        "verified (stage-identity.md 1.4, stage-reload.md 1.1): gfSceneManager* (0x805B8BA0).",
+    )
+    MGR_SCENE = Offset("scene_manager.scene", 0x04, ">I", "verified: current gfScene* (+0 -> name C string)")
+    MGR_SEQUENCE = Offset("scene_manager.sequence", 0x10, ">I", "verified: current gfSequence* (+0 -> name)")
+    SCENE_MATCH = "scMelee"
+    SEQUENCE_VS = "sqVsMelee"
+    GAME_GLOBAL = Field("game_global", 0x805A00E0, ">I", "verified: GameGlobal* (MEM2, 0x90181300).")
+    GG_MODE_MELEE = Offset("game_global.mode_melee", 0x08, ">I", "verified: gmGlobalModeMelee* (0x90180F20)")
+    GG_RECORD = Offset("game_global.record", 0x24, ">I", "verified (stage-identity.md 3.3): save record*")
+    RECORD_WIDESCREEN = Offset(
+        "record.widescreen", 0x838, ">B", "verified (stage-identity.md 3.3): +0x810+0x28, bit 0x80 = 16:9"
+    )
+    MM_STAGE_SLOT = Offset(
+        "mode_melee.stage_slot",
+        0x1A,
+        ">H",
+        "verified: P+ stage SLOT (meleeInitData.stageKind, the stageslot/<slot>.asl number). 0x28 on the CSS, "
+        "SSS and results. Several stages share a slot (ASL variants): identify with the .pac.",
+    )
+    STAGE_KIND = Offset("stage.kind", 0x44, ">I", "verified: srStageKind of the module (st_final.rel = 2 for 3 stages)")
+    LOADER_MANAGER = Field("loader_manager", 0x80B8A6D0, ">I", "verified: stLoaderManager* (sora_melee .bss)")
+    LM_STAGE_LOADER = Offset("loader_manager.stage", 0x1C, ">I", "verified: stLoaderStage*")
+    LOADER_PATH = Offset(
+        "stage_loader.path",
+        0x48,
+        "64s",
+        "verified: '/STAGE/MELEE/STG<pac>.PAC' of the loaded stage. Holds the PREVIOUS path for 1 frame at the "
+        "start of scMelee ('STGResult.PAC'): only valid once g_Stage is set.",
+    )
+    STEX = Field(
+        "stex",
+        0x8053F000,
+        "48s",
+        "verified: P+ STEX param file of the stage (stageinfo/<name>.param), header: +0x04 string table, "
+        "+0x08 size, +0x14 flags (0x20 = suffix kept from the game: Smashville), +0x1C .pac name offset.",
+    )
+    STEX_STRINGS = 0x04
+    STEX_FLAGS = 0x14
+    STEX_PAC = 0x1C
+    STEX_FLAG_GAME_SUFFIX = 0x20
+    STEX_SLOT = Field("stex_slot", 0x8053EF80, ">H", "verified: slot whose STEX file is loaded")
+    STEX_ASL_MASK = Field(
+        "stex_asl_mask", 0x8053EFBA, ">H", "verified: ASL button mask of the variant loaded (0 base, 0x40 L, 0x20 R)"
+    )
+    # Slots that are no stage to play (stage-reload.md 4.3, stage-identity.md 1.3).
+    SLOT_MENUS = 0x26
+    SLOT_RESULTS = 0x28
+
+    # -- Stage camera (stage-identity.md 3) ------------------------------------------
+    STAGE_STPM = Offset("stage.stpm", 0x98, ">I", "verified: STPM (stParam) of the stage .pac")
+    # STPM fixed camera: eye x, y, distance (eye z), FOV (deg), horizontal / vertical angle (deg)
+    STPM_FIXED = Offset("stpm.fixed", 0x8C, ">6f", "verified (stage-identity.md 3.4): +0x8C..+0xA0")
+    AI_CONSTANTS = Offset(
+        "ai.constants",
+        0xB8,
+        ">10f",
+        "verified (stage-identity.md 3.3): cmAIController framing constants B8..DC, the same on every stage",
+    )
+    AI_CONSTANTS_DEFAULT = (0.0, -30.0, 5.0, -7.0, 3.5, -3.5, 0.0, 0.0682, 60.0, 120.0)
+
+    # -- Reload the match on another stage (docs/research/stage-reload.md 4) -----------
+    SEQ_STEP = Offset("sqVsMelee.step", 0x08, ">I", "verified: 10 during the match; 1 = scMemoryChange then scMelee")
+    SEQ_STEP_MATCH = 10
+    SEQ_STEP_REPLAY = 1
+    SC_LOADER = Offset("scMelee.stage_loader", 0x24, ">I", "verified: stLoaderStage* (vtable 0x80B2C3BC)")
+    SC_COROUTINE = Offset("scMelee.coroutine", 0xBC, ">I", "verified: __LINE__ state, 2317 = fight running")
+    SC_RUNNING_LINE = 2317
+    SC_FLAGS = Offset(
+        "scMelee.flags", 0xD8, ">B", "verified: 0x66 fighting; bit 0x20 cleared = normal end of the match"
+    )
+    SC_FLAG_RUNNING = 0x20
+    SC_FLAG_ENDING = 0x10
+    LD_MODE_MELEE = Offset("stage_loader.mode_melee", 0x40, ">I", "verified: gmGlobalModeMelee* (guard)")
+    LD_STATE = Offset("stage_loader.state", 0x44, ">B", "verified: 3 = loaded and watched, 4 = no-op")
+    LD_STATE_WATCH = 3
+    LD_STATE_IDLE = 4
+    LD_SLOT = Offset("stage_loader.slot", 0x8C, ">I", "verified: copy of the loaded slot, compared every frame")
+    ASL_BUTTONS = Field(
+        "asl_buttons", 0x800B9EA2, ">H", "verified: buttons held on the SSS -> P+ variant (0 base, 0x40 L, 0x20 R)"
+    )
+    PP_LAST_SLOT = Field(
+        "pp_last_slot", 0x8053EFB8, ">H", "verified: last slot P+ loaded; 0xFFFF forces the .asl/.param reload"
+    )
+
+    # -- Stage intro camera (docs/research/intro-camera.md) -------------------------
+    MODULE_LIST = Field(
+        "module_list",
+        0x800030C8,
+        ">I",
+        "deduced (OSModuleInfo list head, intro-camera.md 4.2): +0 id, +4 next, +0x10 section table "
+        "(8 bytes each: offset | exec bit, size); section 1 = .text",
+    )
+    SORA_MELEE_ID = 27
+    SORA_MELEE_TEXT = 0x8070AA14  # verified on 3.1.5 and 3.2 (intro-camera.md 4.6)
+    # (offset in sora_melee .text, original word, patched word) - intro-camera.md 2.2
+    INTRO_PATCH_RUN = (0x243CC4, 0x4B6CB8CD, 0x4800006C)  # 0x8094E6D8: running intro writes no camera
+    INTRO_PATCH_END = (0x243C1C, 0x4B6CB975, 0x4800006C)  # 0x8094E630: end writes no camera
+    INTRO_PATCH_AIBIT = (0x243C94, 0x60000010, 0x60000000)  # 0x8094E6A8: end keeps the AI bit (EBC drives)
+    INTRO_OP_VTABLE = 0x80B2D14C  # stOperatorAppearanceFighter vtable, at +0x3C of the object
+    INTRO_OP_VTABLE_AT = 0x3C
+    INTRO_OP_SEARCH = ((0x80600000, 0x100000), (0x80000000, 0x1800000))  # heap window first, then MEM1
+    INTRO_OP_STATE = Offset("intro_op.state", 0x40, ">B", "verified: 2 -> 7 (7 = finished)")
+    INTRO_OP_DONE = 7
+    INTRO_OP_TARGETS = (0xC8, 0xD4, 0xE0, 0xEC, 0x158, 0x128, 0x134, 0x140, 0x14C, 0x17C)  # Brawl target (3f)
+    INTRO_OP_EYES = (0xF8, 0x104, 0x110, 0x11C, 0x164)  # Brawl eye (3f)
+    INTRO_OP_EYE_OFFSET = 0x50  # eye - target (3f)
+    INTRO_OP_FOV = 0x70  # FOV (rad)
+    CC_FLAGS = Offset(
+        "camera_controller.flags",
+        0x44,
+        ">B",
+        "verified (intro-camera.md 2.1): bit 0x80 = processCamera runs; cleared until the GO by the data route",
+    )
+    CC_PROCESS_BIT = 0x80
 
 
 class PPlus32(PPlus315):

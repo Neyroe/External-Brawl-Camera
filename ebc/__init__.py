@@ -9,9 +9,9 @@ importable outside Blender (pytest, CI).
 
 
 def _classes():
-    from .ui import operators, panels, props
+    from .ui import operators, panels, props, stages
 
-    return (*props.classes, *operators.classes, *panels.classes)
+    return (*props.classes, *operators.classes, *stages.classes, *panels.classes)
 
 
 def register() -> None:
@@ -27,12 +27,9 @@ def register() -> None:
 def unregister() -> None:
     import bpy
 
-    from . import runtime
-    from .ui import props, sync
+    from .ui import lifecycle, props
 
-    sync.stop()
-    runtime.get_game().disconnect()
-    runtime.devserver.close()
+    lifecycle.shutdown()
     props.unregister_props()
     for cls in reversed(_classes()):
         bpy.utils.unregister_class(cls)

@@ -21,24 +21,31 @@ DME_DEFAULT_NAMES = ("dolphin-emu", "dolphin-emu-qt2", "dolphin-emu-wx")
 # Other Dolphin builds EBC knows: the Project+ 3.2 AppImage runs ``project-plus-dolphin``
 # (comm is truncated to 15 characters).
 KNOWN_NAMES = (*DME_DEFAULT_NAMES, "project-plus-do")
+COMM_MAX = 15  # /proc/<pid>/comm keeps the first 15 characters of the executable name
 
 
-def running_process_names(proc: str = "/proc") -> list[str] | None:
-    """comm of every running process (Linux), None where /proc does not exist."""
+def process_comms(proc: str = "/proc") -> dict[int, str] | None:
+    """``{pid: comm}`` of every running process (Linux), None where /proc cannot be listed."""
     if not os.path.isdir(proc):
         return None
-    names = []
     try:
         pids = [d for d in os.listdir(proc) if d.isdigit()]
     except OSError:
         return None
+    comms = {}
     for pid in pids:
         try:
             with open(f"{proc}/{pid}/comm", encoding="utf-8", errors="replace") as f:
-                names.append(f.read().strip())
+                comms[int(pid)] = f.read().strip()
         except OSError:
             continue
-    return names
+    return comms
+
+
+def running_process_names(proc: str = "/proc") -> list[str] | None:
+    """comm of every running process (Linux), None where /proc does not exist."""
+    comms = process_comms(proc)
+    return None if comms is None else list(comms.values())
 
 
 def choose_process_name(env: str | None, running: Sequence[str]) -> tuple[str | None, bool, str | None]:
@@ -50,6 +57,10 @@ def choose_process_name(env: str | None, running: Sequence[str]) -> tuple[str | 
     """
     if env and env in running:
         return None, True, None
+    if env and len(env) > COMM_MAX and env[:COMM_MAX] in running:
+        # The kernel truncates comm: DME, which compares it whole, would never find this name and
+        # the fallback below would hook ANOTHER Dolphin (measured: a symlink 'dolphin-ebc-dbgm').
+        return env[:COMM_MAX], True, f"{PROCESS_NAME_ENV}={env!r}: process name is {env[:COMM_MAX]!r} (15 characters)"
     found = [n for n in KNOWN_NAMES if n in running]
     if not found:
         if env:
@@ -150,7 +161,7 @@ class DMEBackend:
             return bool(dme.is_hooked())
         except BackendError:
             return False
-        except Exception:  # DME raises bare RuntimeError on some platforms
+        except Exception:  # DME raises bare RuntimeError on some platforms  # noqa: BLE001
             return False
 
     def unhook(self) -> None:
@@ -158,15 +169,15 @@ class DMEBackend:
             return
         try:
             self._dme.un_hook()
-        except Exception:
-            pass
+        except Exception as exc:  # released anyway; nothing to do but say it  # noqa: BLE001
+            print(f"[EBC] dolphin_memory_engine un_hook failed: {exc!r}")
 
     def is_hooked(self) -> bool:
         if self._dme is None:
             return False
         try:
             return bool(self._dme.is_hooked())
-        except Exception:
+        except Exception:  # DME raises bare RuntimeError: not hooked then  # noqa: BLE001
             return False
 
     def read(self, addr: int, n: int) -> bytes:
