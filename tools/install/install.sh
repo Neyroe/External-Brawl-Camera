@@ -778,8 +778,9 @@ install_scene() {
     file="$dest/$(basename "$asset")"
     if [[ -f "$file" ]]; then
         info "Already downloaded: $file"
-    else
-        run fetch_file "$asset" "$file"
+    elif ! ( run fetch_file "$asset" "$file" ); then
+        warn "Stages scene not downloaded (EBC works without it); get it from the release page."
+        return 0
     fi
     SCENE_PATH="$file"
     if [[ "$file" == *.zip && $DRY_RUN -eq 0 ]]; then

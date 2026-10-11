@@ -25,6 +25,8 @@ import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from .addresses import GF
+
 Vec3 = tuple[float, float, float]
 Mat3 = tuple[Vec3, Vec3, Vec3]
 Rows = Sequence[Sequence[float]]
@@ -39,19 +41,16 @@ MIN_TARGET_DISTANCE = 1.0
 FREE_TARGET_DISTANCE = 100.0
 
 
+# The game's camera defaults. Measured vertical FOV, all stages tested: 0.5236 rad.
+GAME_DEFAULT_FOV_DEG = 30.0
+GAME_DEFAULT_ASPECT = 1.7323
+
+
 # -- small vector / matrix helpers ----------------------------------------------------
 
 
 def _mul(a: Rows, b: Rows) -> Mat3:
     return tuple(tuple(sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)) for i in range(3))  # type: ignore[return-value]
-
-
-def _apply(m: Rows, v: Sequence[float]) -> Vec3:
-    return tuple(sum(m[i][k] * v[k] for k in range(3)) for i in range(3))  # type: ignore[return-value]
-
-
-def _transpose(m: Rows) -> Mat3:
-    return tuple(tuple(m[j][i] for j in range(3)) for i in range(3))  # type: ignore[return-value]
 
 
 def _normalize(v: Sequence[float]) -> Vec3:
@@ -92,6 +91,17 @@ def matrix4(rot: Rows, translation: Sequence[float]) -> tuple[tuple[float, float
 
 
 # -- game model -----------------------------------------------------------------------
+
+
+def look_angles(target: Sequence[float], eye: Sequence[float]) -> tuple[float, float, float]:
+    """Brawl-space target/eye -> (pitch, yaw, distance), the game's convention.
+
+    Checked on the in-game camera: eye (0, 55.11, 154.67), target (0, 35.57, 0)
+    gives the game's own rotation X of -0.1257.
+    """
+    dx, dy, dz = (float(e) - float(t) for e, t in zip(eye, target, strict=True))
+    horizontal = math.hypot(dx, dz)
+    return -math.atan2(dy, horizontal), math.atan2(dx, dz), math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
 def look_pitch_yaw(eye: Sequence[float], target: Sequence[float]) -> tuple[float, float]:
@@ -181,11 +191,6 @@ def plane_target(matrix: Rows) -> Vec3 | None:
 # With cmAIController+0x94 bit 0x10 cleared, nobody calls gfCamera::update (fn_80018778) any
 # more: EBC writes everything it derives. Offsets from gfCamera (0x805B6D20).
 
-GFCAMERA_BLOCK_SIZE = 0x114
-_OFF_DIR = 0x78
-_OFF_ANGLES = 0xC0  # pitch, yaw, roll, distance, fov, zoom, fov_gx
-_OFF_FRUSTUM = 0x104
-
 
 def _gfcamera_floats(
     eye: Sequence[float], target: Sequence[float], roll: float, fov: float, aspect: float
@@ -242,12 +247,12 @@ def gfcamera_fields(
         return None
     head, frustum = floats
     return {
-        0x00: head[0:12],
-        0x30: head[12:24],
-        0x60: head[24:30],
-        _OFF_DIR: head[30:39],
-        _OFF_ANGLES: head[48:55],
-        _OFF_FRUSTUM: frustum,
+        GF.VIEW: head[0:12],
+        GF.WORLD: head[12:24],
+        GF.TARGET: head[24:30],
+        GF.DIR: head[30:39],
+        GF.ANGLES: head[48:55],
+        GF.FRUSTUM: frustum,
     }
 
 
@@ -264,10 +269,10 @@ def pack_gfcamera_block(
     pose is degenerate (``block`` untouched).
     """
     floats = _gfcamera_floats(eye, target, roll, fov, aspect)
-    if floats is None or len(block) < GFCAMERA_BLOCK_SIZE:
+    if floats is None or len(block) < GF.BLOCK_SIZE:
         return False
     _HEAD.pack_into(block, 0, *floats[0])
-    _FRUSTUM.pack_into(block, _OFF_FRUSTUM, *floats[1])
+    _FRUSTUM.pack_into(block, GF.FRUSTUM, *floats[1])
     return True
 
 
@@ -326,6 +331,65 @@ def pose_from_matrix(
         target = (float(fallback_target[0]), float(fallback_target[1]), float(fallback_target[2]))
     roll = -camera_roll(matrix) if with_roll else None
     return CameraPose(target, eye, roll, fov), ok
+
+
+# -- the aim marker (the Rig Origin) in Blender -> Brawl -----------------------------------
+#
+# Duck-typed over Blender objects (``parent``, ``constraints`` with ``enabled`` / ``target`` /
+# ``targets``, ``animation_data``) so it stays testable without bpy. Docs: research/debug-camera.md.
+
+
+def _links(obj) -> list:
+    """The objects ``obj``'s placement reads: its parent and its enabled constraints' targets."""
+    out = []
+    parent = getattr(obj, "parent", None)
+    if parent is not None:
+        out.append(parent)
+    for con in getattr(obj, "constraints", ()) or ():
+        if not getattr(con, "enabled", True):
+            continue
+        target = getattr(con, "target", None)
+        if target is not None:
+            out.append(target)
+        for sub in getattr(con, "targets", ()) or ():  # Armature constraint
+            target = getattr(sub, "target", None)
+            if target is not None:
+                out.append(target)
+    return out
+
+
+def placement_depends_on(obj, other, limit: int = 64) -> bool:
+    """True when ``obj``'s placement reads ``other``: ``obj`` itself, a parent, an enabled
+    constraint's target, or any of theirs (EBC_Blend -> camera A -> Track To Origin)."""
+    seen: set[int] = set()
+    todo = [obj]
+    while todo and len(seen) < limit:
+        cur = todo.pop()
+        if cur is other:
+            return True
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        todo.extend(_links(cur))
+    return False
+
+
+def _animated(obj) -> bool:
+    ad = getattr(obj, "animation_data", None)
+    return ad is not None and (getattr(ad, "action", None) is not None or len(getattr(ad, "drivers", ()) or ()) > 0)
+
+
+def origin_marks_aim(origin, camera) -> bool:
+    """Blender -> Brawl: may the Origin be moved onto the aim point sent?
+
+    Only when it is a plain marker: the camera's placement does not read it (no Track To,
+    parent or other constraint on it, directly or through the cameras a blend copies), and it
+    has no keys or drivers of its own. Otherwise the Origin is an input the user drives and
+    moving it would feed back into the camera.
+    """
+    if origin is None or camera is None or origin is camera:
+        return False
+    return not _animated(origin) and not placement_depends_on(camera, origin)
 
 
 # -- orthographic projection (docs/research/ortho-projection.md) ---------------------------
@@ -481,15 +545,7 @@ class CameraSample:
         return blender_matrix_from_game(self.eye, self.target, self.roll)
 
 
-# Offsets in the CAM_RECORD block (gfCamera, from 0x805B6D20).
-_OFF_WORLD = 0x30
-_OFF_TARGET = 0x60
-_OFF_EYE = 0x6C
-_OFF_ROLL = 0xC8
-_OFF_FOV_GX = 0xD8
-_OFF_ASPECT = 0xE4
-_OFF_BOUNDS = 0xE8
-_OFF_PROJECTION = 0x100
+# Offsets in the CAM_RECORD block: addresses.GF.
 
 
 def parse_camera_block(frame: int, data: bytes) -> CameraSample | None:
@@ -498,24 +554,24 @@ def parse_camera_block(frame: int, data: bytes) -> CameraSample | None:
     A block that reaches +0x104 also gives the projection: ``ortho`` holds the bounds when
     +0x100 is 0 and they make a box (anything else is read as perspective).
     """
-    if len(data) < _OFF_FOV_GX + 4:
+    if len(data) < GF.FOV_GX + 4:
         return None
-    world = struct.unpack_from(">12f", data, _OFF_WORLD)
-    target = struct.unpack_from(">3f", data, _OFF_TARGET)
-    eye = struct.unpack_from(">3f", data, _OFF_EYE)
-    (roll,) = struct.unpack_from(">f", data, _OFF_ROLL)
-    (fov,) = struct.unpack_from(">f", data, _OFF_FOV_GX)
+    world = struct.unpack_from(">12f", data, GF.WORLD)
+    target = struct.unpack_from(">3f", data, GF.TARGET)
+    eye = struct.unpack_from(">3f", data, GF.EYE)
+    (roll,) = struct.unpack_from(">f", data, GF.ROLL)
+    (fov,) = struct.unpack_from(">f", data, GF.FOV_GX)
     values = (*world, *target, *eye, roll, fov)
     if not all(math.isfinite(v) and abs(v) < 1e7 for v in values) or not 0.001 < fov < 3.1:
         return None
     if math.dist(eye, target) < 1e-6:
         return None
     ortho = aspect = None
-    if len(data) >= _OFF_ASPECT + 4:
-        (value,) = struct.unpack_from(">f", data, _OFF_ASPECT)
+    if len(data) >= GF.ASPECT + 4:
+        (value,) = struct.unpack_from(">f", data, GF.ASPECT)
         aspect = value if valid_aspect(value) else None
-    if len(data) >= _OFF_PROJECTION + 4 and struct.unpack_from(">I", data, _OFF_PROJECTION)[0] == 0:
-        bounds = struct.unpack_from(">4f", data, _OFF_BOUNDS)
+    if len(data) >= GF.PROJECTION + 4 and struct.unpack_from(">I", data, GF.PROJECTION)[0] == 0:
+        bounds = struct.unpack_from(">4f", data, GF.BOUNDS)
         if valid_bounds(bounds):
             ortho = bounds
     return CameraSample(frame, target, eye, roll, fov, world, ortho, aspect)
@@ -523,3 +579,53 @@ def parse_camera_block(frame: int, data: bytes) -> CameraSample | None:
 
 def valid_aspect(value: float) -> bool:
     return math.isfinite(value) and 0.5 < value < 4.0
+
+
+# -- Camera optics (pure math, mirrors Blender's sensor-fit rules) -------------
+
+
+def _vertical_sensor(sensor_width: float, sensor_height: float, sensor_fit: str, res_x: float, res_y: float) -> float:
+    if res_x <= 0 or res_y <= 0:
+        return sensor_height
+    if sensor_fit == "AUTO":
+        # AUTO applies sensor_width to the larger image dimension.
+        return sensor_width * res_y / res_x if res_x >= res_y else sensor_width
+    if sensor_fit == "HORIZONTAL":
+        return sensor_width * res_y / res_x
+    return sensor_height  # VERTICAL
+
+
+def vertical_fov(
+    lens: float, sensor_width: float, sensor_height: float, sensor_fit: str, res_x: float, res_y: float
+) -> float:
+    """Full vertical field of view (radians) of a Blender perspective camera.
+
+    This is what the game takes. It depends on Blender's render aspect
+    (res_x / res_y): set the render resolution to the game aspect (1.7323,
+    e.g. 834 x 480) for the horizontal framing to match as well.
+    """
+    sensor = _vertical_sensor(sensor_width, sensor_height, sensor_fit, res_x, res_y)
+    return 2.0 * math.atan(sensor / (2.0 * lens))
+
+
+def lens_for_vertical_fov(
+    fov_rad: float, sensor_width: float, sensor_height: float, sensor_fit: str, res_x: float, res_y: float
+) -> float:
+    """Focal length (mm) giving ``fov_rad`` vertically. Inverse of ``vertical_fov``."""
+    sensor = _vertical_sensor(sensor_width, sensor_height, sensor_fit, res_x, res_y)
+    return sensor / (2.0 * math.tan(fov_rad / 2.0))
+
+
+def aspect_settings(aspect: float, resolution_y: int) -> tuple[int, float, float]:
+    """Render (resolution_x, pixel_aspect_x, pixel_aspect_y) giving exactly ``aspect`` at this height.
+
+    The width is rounded to whole pixels and the pixel aspect absorbs the
+    rounding, so ``res_x * pax / (res_y * pay) == aspect``. Blender's pixel
+    aspects are >= 1: the one above 1 is the one that compensates.
+    """
+    ry = max(1, int(resolution_y))
+    rx = max(1, round(aspect * ry))
+    ratio = aspect * ry / rx  # pax / pay
+    if ratio >= 1.0:
+        return rx, ratio, 1.0
+    return rx, 1.0, 1.0 / ratio
